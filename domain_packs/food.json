@@ -1,0 +1,305 @@
+{
+  "schema_version": "3.0",
+  "slug": "food",
+  "name": "食品生鲜电商客服",
+  "vertical": "food",
+  "default_locale": "zh-CN",
+  "persona": {
+    "name": "ShopSage",
+    "tone": "专业、简洁、共情；先给结论，再给下一步",
+    "languages": [
+      "zh-CN",
+      "en"
+    ],
+    "response_rules": [
+      "只陈述订单系统、已发布知识或确定性政策能够支持的事实",
+      "任何有副作用的操作先复述影响并获得客户确认",
+      "信息不足时只询问完成当前任务所需的最少字段"
+    ]
+  },
+  "intents": [
+    {
+      "name": "human_handoff",
+      "keywords": [
+        "人工",
+        "客服人员",
+        "投诉",
+        "律师",
+        "起诉",
+        "chargeback",
+        "human"
+      ],
+      "route": "handoff",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "return_refund",
+      "keywords": [
+        "退款",
+        "退货",
+        "换货",
+        "不想要",
+        "refund",
+        "return",
+        "exchange"
+      ],
+      "route": "workflow",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "order_status",
+      "keywords": [
+        "订单",
+        "物流",
+        "到哪",
+        "快递",
+        "tracking",
+        "where is my order"
+      ],
+      "route": "workflow",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "cancel_or_change",
+      "keywords": [
+        "取消订单",
+        "改地址",
+        "修改地址",
+        "cancel order",
+        "change address"
+      ],
+      "route": "workflow",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "product",
+      "keywords": [
+        "商品",
+        "产品",
+        "有货",
+        "库存",
+        "参数",
+        "兼容",
+        "耳机",
+        "键盘",
+        "充电座",
+        "windows",
+        "macos",
+        "product",
+        "stock",
+        "配料",
+        "过敏原",
+        "保质期",
+        "冷链",
+        "破损",
+        "allergen"
+      ],
+      "route": "workflow",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "faq",
+      "keywords": [
+        "运费",
+        "包邮",
+        "配送",
+        "多久",
+        "支付方式",
+        "保修",
+        "shipping",
+        "warranty"
+      ],
+      "route": "workflow",
+      "confidence_threshold": 0.72
+    },
+    {
+      "name": "general",
+      "keywords": [],
+      "route": "agent",
+      "confidence_threshold": 0.55
+    }
+  ],
+  "policies": {
+    "returns": {
+      "window_days": 7,
+      "require_human_approval": true,
+      "final_sale_tags": [
+        "final-sale"
+      ],
+      "excluded_categories": [
+        "perishable",
+        "opened-food"
+      ]
+    },
+    "cancellations_allowed_statuses": [
+      "processing"
+    ],
+    "address_change_allowed_statuses": [
+      "processing"
+    ],
+    "discount_max_percent": 15,
+    "customer_confirmation_actions": [
+      "cancel_order",
+      "create_return",
+      "exchange_item",
+      "change_address",
+      "apply_discount",
+      "cancel_subscription"
+    ],
+    "human_approval_actions": [
+      "refund_payment",
+      "discount_above_limit"
+    ]
+  },
+  "tools": [
+    {
+      "action": "get_order",
+      "enabled": true,
+      "risk": "read",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "list_orders",
+      "enabled": true,
+      "risk": "read",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "search_products",
+      "enabled": true,
+      "risk": "read",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "check_inventory",
+      "enabled": true,
+      "risk": "read",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "create_return",
+      "enabled": true,
+      "risk": "medium",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "exchange_item",
+      "enabled": true,
+      "risk": "medium",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "cancel_order",
+      "enabled": true,
+      "risk": "high",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "change_address",
+      "enabled": true,
+      "risk": "high",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "apply_discount",
+      "enabled": false,
+      "risk": "high",
+      "roles": [
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "manage_subscription",
+      "enabled": false,
+      "risk": "high",
+      "roles": [
+        "agent",
+        "admin"
+      ]
+    },
+    {
+      "action": "handoff",
+      "enabled": true,
+      "risk": "low",
+      "roles": [
+        "customer",
+        "agent",
+        "admin"
+      ]
+    }
+  ],
+  "knowledge": {
+    "minimum_score": 0.2,
+    "max_hits": 3,
+    "require_citations": true,
+    "refuse_when_ungrounded": true,
+    "freshness_hours": 24
+  },
+  "handoff": {
+    "enabled": true,
+    "provider": "internal",
+    "urgent_minutes": 15,
+    "normal_minutes": 240,
+    "triggers": [
+      "customer_request",
+      "policy_exception",
+      "low_confidence"
+    ]
+  },
+  "safety": {
+    "max_agent_steps": 4,
+    "max_intents_per_turn": 3,
+    "deny_prompt_injection": true,
+    "redact_sensitive_data": true,
+    "allowed_connector_hosts": []
+  },
+  "quality_gates": {
+    "min_routing_accuracy": 0.95,
+    "min_action_success_rate": 0.98,
+    "min_grounded_answer_rate": 0.95,
+    "max_cross_tenant_failures": 0,
+    "max_error_rate": 0.02
+  },
+  "workflow_order": [
+    "human_handoff",
+    "return_refund",
+    "order_status",
+    "cancel_or_change",
+    "product",
+    "faq",
+    "general"
+  ]
+}

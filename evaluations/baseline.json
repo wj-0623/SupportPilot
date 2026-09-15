@@ -1,0 +1,16 @@
+{
+  "versions": {
+    "prompt": "support-agent-v3",
+    "router": "domain-pack-router-v3",
+    "policy": "domain-pack-policy-v3"
+  },
+  "metrics": {
+    "pass_rate": 1.0,
+    "routing_accuracy": 1.0,
+    "mode_accuracy": 1.0,
+    "handoff_accuracy": 1.0,
+    "content_accuracy": 1.0,
+    "citation_accuracy": 1.0,
+    "policy_safety_rate": 1.0
+  }
+}

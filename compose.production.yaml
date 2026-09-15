@@ -1,0 +1,116 @@
+name: shopsage-v3
+
+x-app: &app
+  image: ${SHOPSAGE_IMAGE:?Set SHOPSAGE_IMAGE to an immutable image digest}
+  env_file: [.env.production]
+  environment:
+    APP_ENV: production
+    AUTH_MODE: jwt
+    DATABASE_URL: postgresql+asyncpg://shopsage:${POSTGRES_PASSWORD}@postgres:5432/shopsage
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+  restart: unless-stopped
+  networks: [backend]
+
+services:
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    <<: *app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    expose: ["8000"]
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  edge:
+    image: ${CADDY_IMAGE:?Set CADDY_IMAGE to an immutable digest}
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN}
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports: ["80:80", "443:443"]
+    depends_on: [api]
+    restart: unless-stopped
+    networks: [backend]
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to an immutable digest}
+    environment:
+      POSTGRES_DB: shopsage
+      POSTGRES_USER: shopsage
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shopsage -d shopsage"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  redis:
+    image: ${REDIS_IMAGE:?Set REDIS_IMAGE to an immutable digest}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  otel-collector:
+    image: ${OTEL_IMAGE:?Set OTEL_IMAGE to an immutable digest}
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./ops/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    restart: unless-stopped
+    networks: [backend]
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:?Set PROMETHEUS_IMAGE to an immutable digest}
+    volumes:
+      - ./ops/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/alerts.yaml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    networks: [backend]
+
+  grafana:
+    image: ${GRAFANA_IMAGE:?Set GRAFANA_IMAGE to an immutable digest}
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    networks: [backend]
+
+networks:
+  backend:
+    internal: false
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:

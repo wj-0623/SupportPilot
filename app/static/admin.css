@@ -1,0 +1,20 @@
+.admin-shell { max-width: 1280px; margin: 0 auto; padding: 32px; }
+.admin-header, .panel-title, .inline-form, .auth-card { display: flex; align-items: center; gap: 16px; }
+.admin-header, .panel-title { justify-content: space-between; }
+.admin-header h1 { margin: 4px 0 0; }
+.auth-card, .admin-panel { background: #fff; border: 1px solid #dedbd4; border-radius: 16px; padding: 20px; }
+.auth-card { margin: 24px 0; flex-wrap: wrap; }
+.auth-card label { flex: 1; min-width: 240px; }
+.auth-card input, .admin-panel input, .admin-panel textarea, .admin-panel select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; border: 1px solid #cbc7bd; border-radius: 8px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.metric { background: #18352c; color: #fff; padding: 16px; border-radius: 12px; }
+.metric strong { display: block; font-size: 24px; margin-top: 4px; }
+.admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.admin-panel h2 { margin: 0; }
+.record-list { display: grid; gap: 10px; margin-top: 16px; }
+.record { border: 1px solid #e4e0d8; border-radius: 10px; padding: 12px; }
+.record small { display: block; color: #716c63; margin: 4px 0 8px; }
+.record button { margin-right: 8px; }
+.admin-panel textarea { min-height: 140px; resize: vertical; }
+#knowledgeForm { display: grid; gap: 10px; margin-top: 16px; }
+@media (max-width: 800px) { .admin-grid { grid-template-columns: 1fr; } .admin-shell { padding: 18px; } }

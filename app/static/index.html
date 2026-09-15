@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ShopSage 电商智能客服演示" />
+    <title>ShopSage · 电商智能客服</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="ShopSage 首页">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>
+            <strong>ShopSage</strong>
+            <small>Support operations, made calm.</small>
+          </span>
+        </a>
+        <nav class="top-actions" aria-label="工具">
+          <span id="modeBadge" class="status-badge"><i></i>检测中</span>
+          <button id="settingsButton" class="ghost-button" type="button">连接设置</button>
+          <a class="dark-button" href="/admin">运营控制台</a>
+        </nav>
+      </header>
+
+      <main class="workspace">
+        <section class="chat-card" aria-label="客服对话">
+          <div class="chat-heading">
+            <div>
+              <p class="eyebrow">CUSTOMER CONSOLE</p>
+              <h1>有什么可以帮你？</h1>
+              <p>查询订单、了解商品，或发起售后申请。</p>
+            </div>
+            <div class="customer-pill">
+              <span class="avatar">林</span>
+              <span><small>演示顾客</small><strong>demo-001</strong></span>
+            </div>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message assistant">
+              <div class="message-avatar">S</div>
+              <div class="bubble">
+                <p>你好，我是 ShopSage。订单状态和政策问题会走可靠的固定流程；复杂问题由工具调用 Agent 协助处理。</p>
+                <span class="message-meta">刚刚 · 系统</span>
+              </div>
+            </article>
+          </div>
+
+          <div id="suggestions" class="suggestions" aria-label="快捷问题">
+            <button type="button">查询订单 ORD-1002</button>
+            <button type="button">我想退货 ORD-1001</button>
+            <button type="button">运费和配送要多久？</button>
+            <button type="button">耳机支持 Windows 吗？</button>
+          </div>
+
+          <form id="chatForm" class="composer">
+            <label class="sr-only" for="messageInput">输入消息</label>
+            <textarea
+              id="messageInput"
+              maxlength="4000"
+              rows="1"
+              placeholder="输入问题，Enter 发送，Shift + Enter 换行"
+              required
+            ></textarea>
+            <button id="sendButton" class="send-button" type="submit" aria-label="发送消息">
+              <span>发送</span><span aria-hidden="true">↗</span>
+            </button>
+          </form>
+          <p class="privacy-note">请勿发送密码、验证码、完整银行卡号或身份证号</p>
+        </section>
+
+        <aside class="insight-panel" aria-label="系统说明">
+          <p class="eyebrow">LIVE ARCHITECTURE</p>
+          <h2>每次回答都有边界</h2>
+          <p class="panel-copy">系统根据风险选择确定性工作流或受限 Agent；脱敏运行记录进入独立审计、指标与回归评测。</p>
+
+          <ol class="flow-list">
+            <li class="active">
+              <span>01</span>
+              <div><strong>输入防护</strong><small>敏感号码隐藏 · 注入检测</small></div>
+            </li>
+            <li>
+              <span>02</span>
+              <div><strong>意图路由</strong><small>确定性分类 · 置信度记录</small></div>
+            </li>
+            <li>
+              <span>03</span>
+              <div><strong>业务处理</strong><small>流程节点或只读工具 Agent</small></div>
+            </li>
+            <li>
+              <span>04</span>
+              <div><strong>策略门</strong><small>归属校验 · 退货规则 · 人工审批</small></div>
+            </li>
+          </ol>
+
+          <div class="boundary-card">
+            <span class="boundary-icon">⌁</span>
+            <div>
+              <strong>模型无权直接退款</strong>
+              <p>符合规则的请求只创建审核工单，资金操作留给授权人员。</p>
+            </div>
+          </div>
+          <a class="docs-link" href="/docs" target="_blank" rel="noreferrer">打开 API 文档 <span>↗</span></a>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="settingsDialog" class="modal">
+      <form id="settingsForm" method="dialog">
+        <div class="modal-heading">
+          <div><p class="eyebrow">CONNECTION</p><h2>连接设置</h2></div>
+          <button class="icon-button" value="cancel" aria-label="关闭">×</button>
+        </div>
+        <label>顾客 ID<input id="customerIdInput" value="demo-001" maxlength="64" /></label>
+        <label>API Key <input id="apiKeyInput" type="password" placeholder="本地默认留空" /></label>
+        <label>Bearer Token <input id="accessTokenInput" type="password" placeholder="生产环境短期访问令牌" /></label>
+        <p>修改顾客 ID 会开启一段新会话。</p>
+        <button class="primary-wide" value="save">保存设置</button>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

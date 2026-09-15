@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.lock
+      - run: python -m pip install -e . --no-deps
+      - run: python -m ruff format --check .
+      - run: python -m ruff check .
+      - run: python -m mypy app
+      - run: python -m pytest --cov=app --cov-report=term-missing
+      - name: Migration smoke test
+        shell: pwsh
+        run: |
+          $env:DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+          alembic upgrade head
+      - run: python -m app.evaluation.runner
+      - name: Static security analysis
+        run: bandit -q -r app
+      - name: Dependency vulnerability audit and SBOM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/security | Out-Null
+          python -m pip_audit -r requirements.lock --progress-spinner off
+          python -m pip_audit -r requirements.lock --progress-spinner off -f cyclonedx-json -o artifacts/security/sbom.json
+      - name: Generate optimization report
+        if: always()
+        run: python -m app.optimization.cli
+      - name: Upload quality evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shopsage-quality-evidence
+          path: artifacts/
+          if-no-files-found: warn
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: shopsage:v3-ci
+      - name: Container vulnerability scan
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: shopsage:v3-ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2

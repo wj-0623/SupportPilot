@@ -1,0 +1,11 @@
+{
+  "minimum_production_samples": 100,
+  "production_thresholds": {
+    "max_error_rate": 0.02,
+    "max_p95_latency_ms": 1500.0,
+    "max_handoff_rate": 0.35,
+    "min_positive_feedback_rate": 0.8,
+    "min_reviewed_run_rate": 0.1,
+    "min_labeled_routing_accuracy": 0.95
+  }
+}

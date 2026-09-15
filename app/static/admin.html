@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ShopSage V3 运营控制台" />
+    <title>ShopSage · 运营控制台</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/admin.css" />
+  </head>
+  <body>
+    <main class="admin-shell">
+      <header class="admin-header">
+        <div><p class="eyebrow">CONTROL PLANE</p><h1>ShopSage V3 运营控制台</h1></div>
+        <a href="/">返回客服台</a>
+      </header>
+      <section class="auth-card">
+        <label>Bearer Token<input id="bearerToken" type="password" autocomplete="off" /></label>
+        <label>开发 Admin Key<input id="adminKey" type="password" autocomplete="off" /></label>
+        <button id="connect" class="dark-button">连接并刷新</button>
+        <span id="status" role="status">尚未连接</span>
+      </section>
+      <section id="quality" class="metric-grid" aria-label="质量快照"></section>
+      <div class="admin-grid">
+        <section class="admin-panel">
+          <div class="panel-title"><h2>Domain Pack</h2><button id="refreshPacks">刷新</button></div>
+          <p>从行业模板创建 Draft，审核后发布为 Live。发布不会自动发生。</p>
+          <div class="inline-form">
+            <select id="templateSelect"></select>
+            <button id="createDraft">创建 Draft</button>
+          </div>
+          <div id="packs" class="record-list"></div>
+        </section>
+        <section class="admin-panel">
+          <div class="panel-title"><h2>连接器</h2><button id="refreshConnectors">刷新</button></div>
+          <p>密钥只填写 `env://NAME` 引用；真实值由服务端环境或密钥库解析。</p>
+          <div id="connectors" class="record-list"></div>
+        </section>
+        <section class="admin-panel">
+          <div class="panel-title"><h2>人工工单</h2><button id="refreshTickets">刷新</button></div>
+          <div id="tickets" class="record-list"></div>
+        </section>
+        <section class="admin-panel">
+          <h2>知识源 Draft</h2>
+          <form id="knowledgeForm">
+            <input name="source_key" required placeholder="唯一来源名" />
+            <input name="title" required placeholder="标题" />
+            <textarea name="content" required placeholder="粘贴政策、FAQ 或产品资料"></textarea>
+            <button class="dark-button">保存并扫描</button>
+          </form>
+          <p id="knowledgeResult"></p>
+        </section>
+      </div>
+    </main>
+    <script src="/static/admin.js" defer></script>
+  </body>
+</html>

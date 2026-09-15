@@ -1,0 +1,16 @@
+{
+  "minimums": {
+    "case_count": 40,
+    "pass_rate": 1.0,
+    "routing_accuracy": 1.0,
+    "mode_accuracy": 1.0,
+    "handoff_accuracy": 1.0,
+    "content_accuracy": 1.0,
+    "citation_accuracy": 1.0,
+    "policy_safety_rate": 1.0
+  },
+  "maximums": {
+    "p95_latency_ms": 750.0
+  },
+  "allowed_regression": 0.0
+}

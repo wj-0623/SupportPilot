@@ -1,0 +1,70 @@
+{
+  "release_decision": "CANARY",
+  "decision_reason": "离线门禁通过，但生产证据不足",
+  "human_approval_required": true,
+  "evaluation_gate": {
+    "passed": true,
+    "violations": []
+  },
+  "evaluation_metrics": {
+    "case_count": 40,
+    "pass_rate": 1.0,
+    "routing_accuracy": 1.0,
+    "mode_accuracy": 1.0,
+    "handoff_accuracy": 1.0,
+    "content_accuracy": 1.0,
+    "citation_accuracy": 1.0,
+    "policy_safety_rate": 1.0,
+    "p50_latency_ms": 16.0,
+    "p95_latency_ms": 16.0
+  },
+  "production_snapshot": {
+    "sample_size": 0,
+    "successful_runs": 0,
+    "error_rate": 0.0,
+    "automation_rate": 0.0,
+    "containment_rate": 0.0,
+    "handoff_rate": 0.0,
+    "p50_latency_ms": 0.0,
+    "p95_latency_ms": 0.0,
+    "positive_feedback_rate": null,
+    "resolved_feedback_rate": null,
+    "confirmed_resolution_rate": null,
+    "first_contact_resolution_rate": null,
+    "action_success_rate": null,
+    "grounded_answer_rate": null,
+    "reviewed_run_rate": 0.0,
+    "labeled_routing_accuracy": null,
+    "top_intents": {},
+    "negative_feedback_reasons": {},
+    "versions": {
+      "prompt": [],
+      "router": [],
+      "policy": []
+    }
+  },
+  "recommendations": [
+    {
+      "priority": "P2",
+      "area": "sample_size",
+      "evidence": "当前生产样本 0，决策下限 100",
+      "action": "继续收集脱敏运行记录、用户反馈和人工抽检标签；仅允许小流量验证。",
+      "validation": "同一版本积累至少 100 次运行后重新生成报告。"
+    },
+    {
+      "priority": "P2",
+      "area": "human_review",
+      "evidence": "人工抽检覆盖率 0.00%",
+      "action": "按意图和风险分层抽检运行，标注正确意图与 1 至 5 分质量分。",
+      "validation": "抽检覆盖率不低于 10.00%。"
+    }
+  ],
+  "workflow": [
+    "选择证据充分的单一改动",
+    "提升 prompt/router/policy 对应版本号",
+    "运行黄金数据集与发布门禁",
+    "人工审阅报告后执行小流量验证",
+    "用生产反馈与抽检结果决定推广或回滚"
+  ],
+  "generated_at": "2026-09-15T14:47:38.647122+00:00"
+}
