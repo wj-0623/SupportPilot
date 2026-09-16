@@ -16,6 +16,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system supportpilot && adduser --system --ingroup supportpilot supportpilot
 
 COPY --from=builder /wheels /wheels
