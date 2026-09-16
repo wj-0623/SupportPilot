@@ -1,4 +1,4 @@
-const adminState = { templates: [], token: sessionStorage.getItem("shopsage.adminToken") || "", key: "" };
+const adminState = { templates: [], token: sessionStorage.getItem("supportpilot.adminToken") || "", key: "" };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
@@ -59,7 +59,7 @@ $("#bearerToken").value = adminState.token;
 $("#connect").addEventListener("click", () => {
   adminState.token = $("#bearerToken").value.trim();
   adminState.key = $("#adminKey").value.trim();
-  sessionStorage.setItem("shopsage.adminToken", adminState.token);
+  sessionStorage.setItem("supportpilot.adminToken", adminState.token);
   refresh();
 });
 $("#refreshPacks").addEventListener("click", loadPacks);

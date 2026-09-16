@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "ShopSage Support Agent"
+    app_name: str = "SupportPilot"
     app_env: str = "development"
     app_api_key: str | None = None
     admin_api_key: str | None = None
@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     enforce_tenant_membership: bool = False
     jwt_secret: str | None = None
     jwt_jwks_url: str | None = None
-    jwt_issuer: str = "shopsage"
-    jwt_audience: str = "shopsage-api"
+    jwt_issuer: str = "supportpilot"
+    jwt_audience: str = "supportpilot-api"
     jwt_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
     default_tenant_id: str = "tenant-demo"
     default_tenant_slug: str = "demo-store"
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     expose_debug_trace: bool = False
     enable_api_docs: bool = True
     otel_exporter_otlp_endpoint: str | None = None
-    otel_service_name: str = "shopsage-support-agent"
+    otel_service_name: str = "supportpilot"
     knowledge_base_path: Path = ROOT_DIR / "data" / "knowledge_base.json"
     catalog_path: Path = ROOT_DIR / "data" / "catalog.json"
     domain_pack_dir: Path = ROOT_DIR / "domain_packs"

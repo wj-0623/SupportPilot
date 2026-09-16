@@ -1,8 +1,8 @@
 const state = {
   conversationId: null,
-  customerId: sessionStorage.getItem("shopsage.customerId") || "demo-001",
-  apiKey: sessionStorage.getItem("shopsage.apiKey") || "",
-  accessToken: sessionStorage.getItem("shopsage.accessToken") || "",
+  customerId: sessionStorage.getItem("supportpilot.customerId") || "demo-001",
+  apiKey: sessionStorage.getItem("supportpilot.apiKey") || "",
+  accessToken: sessionStorage.getItem("supportpilot.accessToken") || "",
   busy: false,
 };
 
@@ -216,9 +216,9 @@ elements.settingsForm.addEventListener("submit", (event) => {
   state.customerId = nextCustomer;
   state.apiKey = elements.apiKey.value.trim();
   state.accessToken = elements.accessToken.value.trim();
-  sessionStorage.setItem("shopsage.customerId", state.customerId);
-  sessionStorage.setItem("shopsage.apiKey", state.apiKey);
-  sessionStorage.setItem("shopsage.accessToken", state.accessToken);
+  sessionStorage.setItem("supportpilot.customerId", state.customerId);
+  sessionStorage.setItem("supportpilot.apiKey", state.apiKey);
+  sessionStorage.setItem("supportpilot.accessToken", state.accessToken);
   elements.settingsDialog.close();
 });
 

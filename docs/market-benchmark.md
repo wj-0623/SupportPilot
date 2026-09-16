@@ -1,10 +1,10 @@
-# ShopSage 市场与开源对标
+# SupportPilot 市场与开源对标
 
 调研日期：2026-09-15。目标是提取可验证的工程模式，不复制参考项目代码，也不把尚未实现的能力写成已完成。
 
 ## 成熟产品的共同模式
 
-| 系统 | 公开能力 | ShopSage 对应实现 | 状态 |
+| 系统 | 公开能力 | SupportPilot 对应实现 | 状态 |
 | --- | --- | --- | --- |
 | Intercom Fin | 将检索、数据、动作拆成可分析阶段；用真实问题组成可复用批量测试，并在上线前诊断来源和失败点 | 节点级观测、版本化黄金数据集、同一服务函数离线回放、发布门禁 | 已实现核心闭环 |
 | Gorgias AI Agent | Train → Automate → Track → Optimize；动作具备条件与顺序，不可逆操作要求顾客确认 | 确定性路由、只读 Agent 工具、退货策略门、人工审批工单、优化报告 | 已实现安全子集 |
@@ -30,7 +30,7 @@
 
 ## 开源客服项目对照
 
-| 项目 | 借鉴方向 | ShopSage 的补强 |
+| 项目 | 借鉴方向 | SupportPilot 的补强 |
 | --- | --- | --- |
 | [LikhithV02/Customer-Support-Agent](https://github.com/LikhithV02/Customer-Support-Agent) | 端到端客服界面和退款策略门 | 加入订单归属隔离、幂等、持久化审计、发布评测 |
 | [Amankhan1009/customer-support-agent](https://github.com/Amankhan1009/customer-support-agent) | 混合路由、持久化和人工转接 | 加入工具白名单、节点观测、反馈与人工抽检闭环 |
@@ -39,7 +39,7 @@
 
 ## 当前边界
 
-ShopSage 已覆盖作品集需要展示的完整“执行—观测—优化”闭环，但还不是 Intercom、Gorgias 或 Zendesk 的商业替代品。以下能力需要接入真实企业系统后才能成立：
+SupportPilot 已覆盖作品集需要展示的完整“执行—观测—优化”闭环，但还不是 Intercom、Gorgias 或 Zendesk 的商业替代品。以下能力需要接入真实企业系统后才能成立：
 
 - Shopify、支付、仓储和 CRM 的正式连接器，以及动作级 OAuth/权限审批。
 - 邮件、WhatsApp、语音和社交平台等全渠道接入。

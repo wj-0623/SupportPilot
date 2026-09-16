@@ -1,12 +1,12 @@
-name: shopsage-v3
+name: supportpilot
 
 x-app: &app
-  image: ${SHOPSAGE_IMAGE:?Set SHOPSAGE_IMAGE to an immutable image digest}
+  image: ${SUPPORTPILOT_IMAGE:?Set SUPPORTPILOT_IMAGE to an immutable image digest}
   env_file: [.env.production]
   environment:
     APP_ENV: production
     AUTH_MODE: jwt
-    DATABASE_URL: postgresql+asyncpg://shopsage:${POSTGRES_PASSWORD}@postgres:5432/shopsage
+    DATABASE_URL: postgresql+asyncpg://supportpilot:${POSTGRES_PASSWORD}@postgres:5432/supportpilot
     REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
   restart: unless-stopped
@@ -51,12 +51,12 @@ services:
   postgres:
     image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to an immutable digest}
     environment:
-      POSTGRES_DB: shopsage
-      POSTGRES_USER: shopsage
+      POSTGRES_DB: supportpilot
+      POSTGRES_USER: supportpilot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes: ["postgres_data:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shopsage -d shopsage"]
+      test: ["CMD-SHELL", "pg_isready -U supportpilot -d supportpilot"]
       interval: 5s
       timeout: 3s
       retries: 20

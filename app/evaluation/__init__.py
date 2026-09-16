@@ -1,1 +1,1 @@
-"""Offline regression evaluation for ShopSage releases."""
+"""Offline regression evaluation for SupportPilot releases."""

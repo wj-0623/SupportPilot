@@ -43,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: shopsage-quality-evidence
+          name: supportpilot-quality-evidence
           path: artifacts/
           if-no-files-found: warn
 
@@ -57,11 +57,11 @@ jobs:
         with:
           context: .
           load: true
-          tags: shopsage:v3-ci
+          tags: supportpilot:v3-ci
       - name: Container vulnerability scan
         uses: aquasecurity/trivy-action@0.33.1
         with:
-          image-ref: shopsage:v3-ci
+          image-ref: supportpilot:v3-ci
           format: table
           exit-code: "1"
           severity: CRITICAL,HIGH

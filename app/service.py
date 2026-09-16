@@ -187,8 +187,8 @@ class SupportService:
                         "summary": result.get("ticket_reason") or request.message,
                         "priority": result.get("ticket_priority", "normal"),
                         "custom_attributes": {
-                            "shopsage_ticket_id": result["ticket_id"],
-                            "shopsage_conversation_id": conversation.id,
+                            "supportpilot_ticket_id": result["ticket_id"],
+                            "supportpilot_conversation_id": conversation.id,
                         },
                     },
                     idempotency_key=f"handoff:{result['ticket_id']}",

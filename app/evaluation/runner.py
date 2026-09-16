@@ -123,7 +123,7 @@ def _evaluate_gate(
 def _markdown(report: dict[str, Any]) -> str:
     metrics = report["metrics"]
     lines = [
-        "# ShopSage evaluation report",
+        "# SupportPilot evaluation report",
         "",
         f"Generated: {report['generated_at']}",
         f"Release gate: **{'PASS' if report['gate']['passed'] else 'FAIL'}**",
@@ -224,7 +224,7 @@ async def run_evaluation(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run ShopSage offline release evaluation")
+    parser = argparse.ArgumentParser(description="Run SupportPilot offline release evaluation")
     parser.add_argument("--dataset", type=Path, default=ROOT_DIR / "evaluations" / "golden.json")
     parser.add_argument("--gate", type=Path, default=ROOT_DIR / "config" / "quality_gates.json")
     parser.add_argument("--baseline", type=Path, default=ROOT_DIR / "evaluations" / "baseline.json")

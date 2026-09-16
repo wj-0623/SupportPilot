@@ -8,4 +8,4 @@ $ErrorActionPreference = "Stop"
 & .\.venv\Scripts\bandit.exe -q -r app
 & .\.venv\Scripts\python.exe -m pip_audit -r requirements.lock --progress-spinner off
 
-Write-Host "ShopSage V3 quality gate passed."
+Write-Host "SupportPilot V3 quality gate passed."

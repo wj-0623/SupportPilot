@@ -28,7 +28,7 @@ async def seed_demo_data(database: Database, settings: Settings | None = None) -
             tenant = Tenant(
                 id=settings.default_tenant_id,
                 slug=settings.default_tenant_slug,
-                name="ShopSage Demo Store",
+                name="SupportPilot Demo Store",
             )
             session.add(tenant)
         customers = [

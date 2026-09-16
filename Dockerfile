@@ -16,20 +16,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system shopsage && adduser --system --ingroup shopsage shopsage
+RUN addgroup --system supportpilot && adduser --system --ingroup supportpilot supportpilot
 
 COPY --from=builder /wheels /wheels
 COPY requirements.lock ./
 RUN python -m pip install --no-index --find-links=/wheels -r requirements.lock && \
-    python -m pip install --no-index --find-links=/wheels --no-deps shopsage-support-agent
+    python -m pip install --no-index --find-links=/wheels --no-deps supportpilot
 COPY app ./app
 COPY data ./data
 COPY domain_packs ./domain_packs
 COPY migrations ./migrations
 COPY alembic.ini ./
-RUN mkdir -p /app/data && chown -R shopsage:shopsage /app
+RUN mkdir -p /app/data && chown -R supportpilot:supportpilot /app
 
-USER shopsage
+USER supportpilot
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

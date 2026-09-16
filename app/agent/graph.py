@@ -151,7 +151,7 @@ class SupportGraph:
     ) -> Callable[[SupportState], Awaitable[dict[str, Any]]]:
         async def wrapped(state: SupportState) -> dict[str, Any]:
             started = perf_counter()
-            tracer = trace.get_tracer("shopsage.agent")
+            tracer = trace.get_tracer("supportpilot.agent")
             with tracer.start_as_current_span(f"agent.node.{name}") as span:
                 try:
                     result = await handler(state)
@@ -176,10 +176,10 @@ class SupportGraph:
                     "attributes": attributes,
                 }
                 NODE_LATENCY.labels(node=name).observe(elapsed_ms / 1_000)
-                span.set_attribute("shopsage.node.name", name)
-                span.set_attribute("shopsage.node.duration_ms", elapsed_ms)
+                span.set_attribute("supportpilot.node.name", name)
+                span.set_attribute("supportpilot.node.duration_ms", elapsed_ms)
                 for key, value in attributes.items():
-                    span.set_attribute(f"shopsage.{key}", value)
+                    span.set_attribute(f"supportpilot.{key}", value)
                 result["observations"] = [observation]
                 return result
 

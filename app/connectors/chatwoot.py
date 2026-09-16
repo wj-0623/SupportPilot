@@ -50,7 +50,7 @@ class ChatwootHelpdeskProvider:
             )
             contact.raise_for_status()
             contact_id = contact.json()["payload"]["contact"]["id"]
-            source_id = f"shopsage-{customer_external_id}"
+            source_id = f"supportpilot-{customer_external_id}"
             conversation = await self.client.post(
                 f"{self.base_url}api/v1/accounts/{self.account_id}/conversations",
                 json={
@@ -89,7 +89,7 @@ class ChatwootHelpdeskProvider:
         if action != "handoff":
             raise ConnectorError("unsupported_action", f"Chatwoot does not support {action}")
         attributes = dict(payload.get("custom_attributes", {}))
-        attributes["shopsage_idempotency_key"] = idempotency_key
+        attributes["supportpilot_idempotency_key"] = idempotency_key
         return await self.create_handoff(
             customer_external_id=str(payload["external_customer_id"]),
             name=str(payload.get("customer_name", payload["external_customer_id"])),

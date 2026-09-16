@@ -22,7 +22,7 @@ class RedisCoordinator:
     async def lock(self, key: str, ttl_seconds: int = 30) -> AsyncIterator[bool]:
         token = str(uuid4())
         acquired = bool(
-            await self.client.set(f"shopsage:lock:{key}", token, nx=True, ex=ttl_seconds)
+            await self.client.set(f"supportpilot:lock:{key}", token, nx=True, ex=ttl_seconds)
         )
         try:
             yield acquired
@@ -32,12 +32,12 @@ class RedisCoordinator:
                     "if redis.call('get', KEYS[1]) == ARGV[1] then "
                     "return redis.call('del', KEYS[1]) else return 0 end",
                     1,
-                    f"shopsage:lock:{key}",
+                    f"supportpilot:lock:{key}",
                     token,
                 )
 
     async def allow(self, key: str, limit: int, window_seconds: int = 60) -> bool:
-        redis_key = f"shopsage:rate:{key}"
+        redis_key = f"supportpilot:rate:{key}"
         count = await self.client.incr(redis_key)
         if count == 1:
             await self.client.expire(redis_key, window_seconds)

@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "ShopSage: tests",
+      "label": "SupportPilot: tests",
       "type": "process",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "args": ["-m", "pytest", "-q"],
@@ -10,7 +10,7 @@
       "problemMatcher": []
     },
     {
-      "label": "ShopSage: quality",
+      "label": "SupportPilot: quality",
       "type": "process",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "args": ["-m", "ruff", "check", "."],
@@ -18,4 +18,3 @@
     }
   ]
 }
-

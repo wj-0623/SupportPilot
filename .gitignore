@@ -1,4 +1,7 @@
 .env
+.env.*
+!.env.example
+!.env.production.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -14,4 +17,3 @@ build/
 *.egg-info/
 .idea/
 .DS_Store
-

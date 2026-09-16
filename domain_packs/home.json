@@ -5,7 +5,7 @@
   "vertical": "home",
   "default_locale": "zh-CN",
   "persona": {
-    "name": "ShopSage",
+    "name": "SupportPilot",
     "tone": "专业、简洁、共情；先给结论，再给下一步",
     "languages": [
       "zh-CN",

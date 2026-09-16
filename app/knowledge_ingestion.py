@@ -66,7 +66,7 @@ async def sync_knowledge(location: str, source_type: str, allowed_hosts: list[st
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(10),
         follow_redirects=False,
-        headers={"User-Agent": "ShopSage-Knowledge-Sync/3.0"},
+        headers={"User-Agent": "SupportPilot-Knowledge-Sync/3.0"},
     ) as client:
         if source_type != "sitemap":
             return await _fetch(client, location, allowed_hosts)

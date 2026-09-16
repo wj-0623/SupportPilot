@@ -22,7 +22,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _markdown(report: dict[str, Any]) -> str:
     production = report["production_snapshot"]
     lines = [
-        "# ShopSage optimization report",
+        "# SupportPilot optimization report",
         "",
         f"Generated: {report['generated_at']}",
         f"Release decision: **{report['release_decision']}**",
@@ -91,7 +91,7 @@ async def generate_report(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate ShopSage optimization advice")
+    parser = argparse.ArgumentParser(description="Generate SupportPilot optimization advice")
     parser.add_argument(
         "--evaluation",
         type=Path,

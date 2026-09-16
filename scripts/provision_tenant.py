@@ -53,7 +53,7 @@ async def provision(args: argparse.Namespace) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Provision one ShopSage tenant")
+    parser = argparse.ArgumentParser(description="Provision one SupportPilot tenant")
     parser.add_argument("--tenant-id", required=True)
     parser.add_argument("--slug", required=True)
     parser.add_argument("--name", required=True)

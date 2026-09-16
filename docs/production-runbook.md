@@ -14,7 +14,7 @@
 
 1. 从 `.env.production.example` 创建 `.env.production`，把所有空值和 `REPLACE` 填完。
 2. 用 `pip-audit -r requirements.lock`、Bandit、测试和 42 项评测门禁验证 release。
-3. 构建镜像并生成 SBOM；把镜像推到受控 registry 后，将 `SHOPSAGE_IMAGE` 固定为 digest。
+3. 构建镜像并生成 SBOM；把镜像推到受控 registry 后，将 `SUPPORTPILOT_IMAGE` 固定为 digest。
 4. 先执行 `alembic upgrade head`。应用在 schema revision 不匹配时拒绝启动。
 5. 用 `python scripts/provision_tenant.py --tenant-id ... --slug ... --name ... --created-by <OIDC-sub>` 创建租户 Draft；脚本同时创建首位管理员成员。只有策略已审核时才加 `--publish`。
 6. 执行 `docker compose -f compose.production.yaml up -d`。

@@ -15,7 +15,7 @@ def main() -> int:
         auth_mode="jwt",
         enforce_tenant_membership=True,
         enable_api_docs=False,
-        database_url="postgresql+asyncpg://validator:validator@db/shopsage",
+        database_url="postgresql+asyncpg://validator:validator@db/supportpilot",
         redis_url="redis://:validator@redis:6379/0",
         jwt_secret="validation-only-secret-that-is-over-32-characters",
         cors_origins=["https://support.example.com"],
@@ -30,7 +30,7 @@ def main() -> int:
     if not lock.exists() or "fastapi==" not in lock.read_text(encoding="utf-8"):
         raise RuntimeError("Production dependency lock is missing or invalid")
     compose = (ROOT / "compose.production.yaml").read_text(encoding="utf-8")
-    required = ["SHOPSAGE_IMAGE", "POSTGRES_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE"]
+    required = ["SUPPORTPILOT_IMAGE", "POSTGRES_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE"]
     missing = [item for item in required if item not in compose]
     if missing:
         raise RuntimeError(f"Production compose omits immutable image settings: {missing}")

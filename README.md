@@ -1,6 +1,6 @@
-# ShopSage V3 电商客服平台
+# SupportPilot V3 电商客服平台
 
-ShopSage V3 是面向真实商家接入的多租户电商客服系统。它用 **LangGraph 工作流 + 受限 Agent** 处理咨询，用版本化 **Domain Pack** 配置行业、品牌、政策、工具和知识，并把线上执行、可观测数据、人工复核、回归评测和灰度发布组成闭环。
+SupportPilot V3 是面向真实商家接入的多租户电商客服系统。它用 **LangGraph 工作流 + 受限 Agent** 处理咨询，用版本化 **Domain Pack** 配置行业、品牌、政策、工具和知识，并把线上执行、可观测数据、人工复核、回归评测和灰度发布组成闭环。
 
 > 本地演示无需外部服务：顾客 `demo-001`，订单 `ORD-1001`、`ORD-1002`、`ORD-1003`。生产上线必须配置商家政策、OIDC/JWT、模型和电商平台凭据。
 
@@ -68,7 +68,7 @@ python -m venv .venv
 ```json
 {
   "iss": "https://identity.example.com/",
-  "aud": "shopsage-api",
+  "aud": "supportpilot-api",
   "sub": "user-or-service-id",
   "tenant_id": "merchant-id",
   "role": "customer | agent | admin | service",

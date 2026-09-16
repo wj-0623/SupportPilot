@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "ShopSage API",
+      "name": "SupportPilot API",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
@@ -12,4 +12,3 @@
     }
   ]
 }
-

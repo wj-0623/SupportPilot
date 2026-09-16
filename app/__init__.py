@@ -1,1 +1,1 @@
-"""ShopSage customer support agent."""
+"""SupportPilot customer support agent."""

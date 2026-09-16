@@ -30,7 +30,7 @@ class ShopifyCommerceProvider:
 
     async def healthcheck(self) -> bool:
         try:
-            result = await self._graphql("query ShopSageHealth { shop { id } }")
+            result = await self._graphql("query SupportPilotHealth { shop { id } }")
             return "shop" in result
         except ConnectorError:
             return False
@@ -69,7 +69,7 @@ class ShopifyCommerceProvider:
                 )
             customer_search_id = external_customer_id.rsplit("/", 1)[-1]
             query = """
-            query ShopSageOrder($query: String!) {
+            query SupportPilotOrder($query: String!) {
               orders(first: 1, query: $query) {
                 nodes { id name displayFinancialStatus displayFulfillmentStatus
                   customer { id } fulfillments(first: 5) { trackingInfo { number url } } }
@@ -105,7 +105,7 @@ class ShopifyCommerceProvider:
             )
         if action == "create_return":
             mutation = """
-            mutation ShopSageReturn($input: ReturnInput!) {
+            mutation SupportPilotReturn($input: ReturnInput!) {
               returnCreate(returnInput: $input) {
                 return { id status }
                 userErrors { field message }

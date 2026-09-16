@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PersonaConfig(BaseModel):
-    name: str = "ShopSage"
+    name: str = "SupportPilot"
     tone: str = "professional, concise and empathetic"
     languages: list[str] = Field(default_factory=lambda: ["zh-CN", "en"])
     response_rules: list[str] = Field(default_factory=list)

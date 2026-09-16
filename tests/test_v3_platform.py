@@ -30,8 +30,8 @@ def token(*, role: str, customer_id: str | None = None, tenant_id: str = "tenant
 
     header = encode({"alg": "HS256", "typ": "JWT"})
     payload: dict[str, object] = {
-        "iss": "shopsage-test",
-        "aud": "shopsage-api",
+        "iss": "supportpilot-test",
+        "aud": "supportpilot-api",
         "sub": f"{role}-subject",
         "tenant_id": tenant_id,
         "role": role,
@@ -51,8 +51,8 @@ def build_v3_client() -> TestClient:
         app_env="test",
         auth_mode="jwt",
         jwt_secret=JWT_SECRET,
-        jwt_issuer="shopsage-test",
-        jwt_audience="shopsage-api",
+        jwt_issuer="supportpilot-test",
+        jwt_audience="supportpilot-api",
         database_url="sqlite+aiosqlite:///:memory:",
         llm_enabled=False,
         rate_limit_per_minute=10_000,
@@ -311,8 +311,8 @@ def test_staff_access_can_require_active_tenant_membership() -> None:
         auth_mode="jwt",
         enforce_tenant_membership=True,
         jwt_secret=JWT_SECRET,
-        jwt_issuer="shopsage-test",
-        jwt_audience="shopsage-api",
+        jwt_issuer="supportpilot-test",
+        jwt_audience="supportpilot-api",
         database_url="sqlite+aiosqlite:///:memory:",
         llm_enabled=False,
     )
