@@ -59,7 +59,7 @@ jobs:
           load: true
           tags: supportpilot:v3-ci
       - name: Container vulnerability scan
-        uses: aquasecurity/trivy-action@v0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: supportpilot:v3-ci
           format: table
