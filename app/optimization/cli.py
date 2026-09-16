@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -112,6 +113,9 @@ def main() -> int:
     )
     markdown = _markdown(report)
     (args.output / "latest.md").write_text(markdown, encoding="utf-8")
+    reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure_stdout):
+        reconfigure_stdout(encoding="utf-8")
     print(markdown)
     return 1 if report["release_decision"] == "BLOCK" else 0
 
