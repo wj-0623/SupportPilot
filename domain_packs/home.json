@@ -24,9 +24,14 @@
         "人工",
         "客服人员",
         "投诉",
+        "太失望",
+        "非常生气",
+        "欺诈",
+        "盗刷",
         "律师",
         "起诉",
         "chargeback",
+        "fraud",
         "human"
       ],
       "route": "handoff",
@@ -276,7 +281,29 @@
     "triggers": [
       "customer_request",
       "policy_exception",
-      "low_confidence"
+      "low_confidence",
+      "frustration",
+      "sensitive_topic"
+    ],
+    "escalation_keywords": [
+      "人工",
+      "投诉",
+      "太失望",
+      "非常生气",
+      "欺诈",
+      "律师",
+      "起诉",
+      "chargeback",
+      "fraud",
+      "human"
+    ],
+    "urgent_keywords": [
+      "律师",
+      "起诉",
+      "欺诈",
+      "盗刷",
+      "chargeback",
+      "fraud"
     ]
   },
   "safety": {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from time import perf_counter
 from typing import Any, Literal, cast
@@ -200,6 +201,12 @@ class SupportGraph:
     async def classify(self, state: SupportState) -> dict:
         pack = state.get("domain_pack")
         patterns = pack.intent_patterns() if pack else None
+        if pack and pack.handoff.enabled:
+            patterns = dict(pack.intent_patterns())
+            existing = patterns.get("human_handoff", ())
+            patterns["human_handoff"] = tuple(
+                dict.fromkeys((*existing, *pack.handoff.escalation_keywords))
+            )
         result = classify_intent(state["sanitized_message"], patterns)
         results = classify_intents(
             state["sanitized_message"],
@@ -609,16 +616,31 @@ class SupportGraph:
         priority = state.get(
             "ticket_priority", "high" if state["intent"] == "human_handoff" else "normal"
         )
+        pack = state.get("domain_pack")
+        normalized = state.get("sanitized_message", "").lower()
+        if pack and any(keyword.lower() in normalized for keyword in pack.handoff.urgent_keywords):
+            priority = "urgent"
+        sla_minutes = (
+            pack.handoff.urgent_minutes
+            if pack and priority in {"urgent", "high"}
+            else pack.handoff.normal_minutes
+            if pack
+            else 240
+        )
         ticket = await state["repo"].create_ticket(
             conversation_id=state["conversation_id"],
             customer_id=state["customer_id"],
             order_id=state.get("order_id"),
             reason=reason,
             priority=priority,
+            channel=state.get("channel", "web"),
+            sla_due_at=datetime.now(UTC) + timedelta(minutes=sla_minutes),
         )
         prefix = state.get("response", "已记录你的请求。")
         return {
-            "response": f"{prefix} 工单 {ticket.id} 已创建，人工客服会继续处理。",
+            "response": (
+                f"{prefix} 工单 {ticket.id} 已创建，人工客服会在约 {sla_minutes} 分钟内继续处理。"
+            ),
             "ticket_id": ticket.id,
             "ticket_priority": priority,
             "mode": state.get("mode", "workflow"),

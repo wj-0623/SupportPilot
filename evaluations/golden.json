@@ -731,5 +731,41 @@
         "policy:return-30d"
       ]
     }
+  },
+  {
+    "id": "handoff-frustration",
+    "category": "handoff",
+    "customer_id": "demo-001",
+    "turns": [
+      "这次体验太失望了，我非常生气"
+    ],
+    "expected": {
+      "intent": "human_handoff",
+      "mode": "workflow",
+      "ticket": true,
+      "must_contain": [
+        "工单",
+        "分钟"
+      ],
+      "citation_ids": []
+    }
+  },
+  {
+    "id": "handoff-fraud-urgent",
+    "category": "handoff",
+    "customer_id": "demo-001",
+    "turns": [
+      "我怀疑账户被盗刷和欺诈，请立即转人工"
+    ],
+    "expected": {
+      "intent": "human_handoff",
+      "mode": "workflow",
+      "ticket": true,
+      "must_contain": [
+        "工单",
+        "15 分钟"
+      ],
+      "citation_ids": []
+    }
   }
 ]

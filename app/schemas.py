@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.version import __version__
+
 
 class ChatRequest(BaseModel):
     customer_id: str | None = Field(
@@ -63,9 +65,14 @@ class TicketResponse(BaseModel):
     order_id: str | None
     status: str
     priority: str
+    channel: str
+    assigned_to: str | None
     reason: str
     resolution: str | None
+    sla_due_at: datetime | None
+    first_response_at: datetime | None
     created_at: datetime
+    updated_at: datetime
     resolved_at: datetime | None
 
 
@@ -73,9 +80,43 @@ class ResolveTicketRequest(BaseModel):
     resolution: str = Field(min_length=2, max_length=2_000)
 
 
+class TicketUpdateRequest(BaseModel):
+    status: Literal["open", "in_progress", "waiting_customer", "resolved", "reopened"] | None = None
+    assigned_to: str | None = Field(default=None, max_length=200)
+    resolution: str | None = Field(default=None, max_length=2_000)
+
+
+class ChannelMessageRequest(BaseModel):
+    external_customer_id: str = Field(min_length=1, max_length=160)
+    external_conversation_id: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=4_000)
+    locale: str | None = Field(default=None, max_length=20)
+
+
+class ChannelMessageResponse(BaseModel):
+    event_id: str
+    conversation_id: str
+    message_id: str
+    reply: str
+    ticket_id: str | None = None
+    pending_action: PendingAction | None = None
+
+
+class AuditEventResponse(BaseModel):
+    id: str
+    actor: str
+    role: str
+    method: str
+    path: str
+    status_code: int
+    request_id: str | None
+    resource_id: str | None
+    created_at: datetime
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
-    version: str = "3.0.0"
+    version: str = __version__
     llm_mode: Literal["openai", "offline"]
 
 
@@ -248,6 +289,22 @@ class KnowledgeSourceResponse(BaseModel):
     injection_flags: list[str]
     synced_at: datetime
     published_at: datetime | None
+
+
+class KnowledgeHealthResponse(BaseModel):
+    live_sources: int
+    fresh_sources: int
+    stale_sources: int
+    stale_source_keys: list[str]
+    freshness_hours: int
+
+
+class HandoffSnapshot(BaseModel):
+    total_tickets: int
+    active_tickets: int
+    overdue_tickets: int
+    sla_compliance_rate: float | None
+    by_priority: dict[str, int]
 
 
 class KnowledgeSyncRequest(BaseModel):

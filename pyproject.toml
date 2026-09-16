@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "shopsage-support-agent"
-version = "3.0.0"
+version = "3.0.1"
 description = "Production-grade multi-tenant e-commerce support platform with workflows, bounded agents and safe actions."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -25,3 +25,4 @@ CONNECTOR_LATENCY = Histogram(
 KNOWLEDGE_RETRIEVALS = Counter(
     "shopsage_knowledge_retrievals_total", "Knowledge retrieval results", ["grounded"]
 )
+AUDIT_EVENTS = Counter("shopsage_audit_events_total", "Persisted API audit events", ["status"])

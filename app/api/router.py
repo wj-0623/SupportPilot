@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.core.security import Principal, principal_dependency
 from app.db.platform_repository import PlatformRepository
 from app.db.repository import ConflictError, NotFoundError
+from app.domain.guardrails import inspect_message
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -18,6 +19,7 @@ from app.schemas import (
     MessageResponse,
     ResolveTicketRequest,
     TicketResponse,
+    TicketUpdateRequest,
 )
 from app.service import SupportService
 
@@ -30,9 +32,14 @@ def _ticket_response(ticket) -> TicketResponse:  # type: ignore[no-untyped-def]
         order_id=ticket.order_id,
         status=ticket.status,
         priority=ticket.priority,
+        channel=ticket.channel,
+        assigned_to=ticket.assigned_to,
         reason=ticket.reason,
         resolution=ticket.resolution,
+        sla_due_at=ticket.sla_due_at,
+        first_response_at=ticket.first_response_at,
         created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
         resolved_at=ticket.resolved_at,
     )
 
@@ -214,6 +221,35 @@ def create_router(settings: Settings) -> APIRouter:
         try:
             ticket = await PlatformRepository(session).resolve_scoped_ticket(
                 principal.tenant_id, ticket_id, payload.resolution
+            )
+            await session.commit()
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ConflictError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return _ticket_response(ticket)
+
+    @router.patch(
+        "/tickets/{ticket_id}",
+        response_model=TicketResponse,
+        summary="Assign or transition a human-review ticket",
+    )
+    async def update_ticket(
+        ticket_id: str,
+        payload: TicketUpdateRequest,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> TicketResponse:
+        resolution = (
+            inspect_message(payload.resolution).sanitized_text if payload.resolution else None
+        )
+        try:
+            ticket = await PlatformRepository(session).update_scoped_ticket(
+                principal.tenant_id,
+                ticket_id,
+                status=payload.status,
+                assigned_to=payload.assigned_to,
+                resolution=resolution,
             )
             await session.commit()
         except NotFoundError as exc:

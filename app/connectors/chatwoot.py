@@ -91,8 +91,8 @@ class ChatwootHelpdeskProvider:
         attributes = dict(payload.get("custom_attributes", {}))
         attributes["shopsage_idempotency_key"] = idempotency_key
         return await self.create_handoff(
-            customer_external_id=str(payload["customer_id"]),
-            name=str(payload.get("customer_name", payload["customer_id"])),
+            customer_external_id=str(payload["external_customer_id"]),
+            name=str(payload.get("customer_name", payload["external_customer_id"])),
             summary=str(payload["summary"]),
             priority=str(payload.get("priority", "normal")),
             custom_attributes=attributes,

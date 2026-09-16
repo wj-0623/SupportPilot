@@ -13,8 +13,10 @@ from typing import Literal, cast
 
 import jwt
 from fastapi import Header, HTTPException, Request, status
+from sqlalchemy import select
 
 from app.core.config import Settings
+from app.db.models import TenantMember
 
 
 def secure_equals(candidate: str | None, expected: str | None) -> bool:
@@ -149,6 +151,7 @@ def _jwks_client(url: str) -> jwt.PyJWKClient:
 
 def principal_dependency(settings: Settings, *roles: Role) -> Callable[..., Awaitable[Principal]]:
     async def verify(
+        request: Request,
         authorization: str | None = Header(default=None),
         x_api_key: str | None = Header(default=None),
         x_admin_key: str | None = Header(default=None),
@@ -174,6 +177,21 @@ def principal_dependency(settings: Settings, *roles: Role) -> Callable[..., Awai
             )
         if roles:
             principal.require_roles(*roles)
+        if settings.enforce_tenant_membership and principal.role in {"agent", "admin", "service"}:
+            database = getattr(request.app.state, "database", None)
+            if database is None:
+                raise HTTPException(status_code=503, detail="Authorization store is unavailable")
+            async with database.sessions() as session:
+                member = await session.scalar(
+                    select(TenantMember).where(
+                        TenantMember.tenant_id == principal.tenant_id,
+                        TenantMember.subject == principal.subject,
+                        TenantMember.active.is_(True),
+                    )
+                )
+            if member is None or member.role != principal.role:
+                raise HTTPException(status_code=403, detail="Tenant membership is not active")
+        request.state.principal = principal
         return principal
 
     return verify

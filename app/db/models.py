@@ -92,9 +92,18 @@ class Ticket(Base):
     order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="open", index=True)
     priority: Mapped[str] = mapped_column(String(16), default="normal")
+    channel: Mapped[str] = mapped_column(String(32), default="web", index=True)
+    assigned_to: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     reason: Mapped[str] = mapped_column(Text)
     resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_response_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -181,7 +190,10 @@ class Tenant(Base):
 
 class TenantCustomer(Base):
     __tablename__ = "tenant_customers"
-    __table_args__ = (UniqueConstraint("tenant_id", "customer_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "customer_id"),
+        UniqueConstraint("tenant_id", "external_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
@@ -320,15 +332,52 @@ class OutboxEvent(Base):
 
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
-    __table_args__ = (UniqueConstraint("tenant_id", "provider", "external_id"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "connector_id", "external_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    connector_id: Mapped[str] = mapped_column(ForeignKey("connector_definitions.id"), index=True)
     provider: Mapped[str] = mapped_column(String(40), index=True)
     external_id: Mapped[str] = mapped_column(String(200))
     signature_valid: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[str] = mapped_column(String(24), default="received", index=True)
     payload_hash: Mapped[str] = mapped_column(String(64))
+    conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ChannelConversation(Base):
+    __tablename__ = "channel_conversations"
+    __table_args__ = (UniqueConstraint("tenant_id", "connector_id", "external_conversation_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    connector_id: Mapped[str] = mapped_column(ForeignKey("connector_definitions.id"), index=True)
+    external_conversation_id: Mapped[str] = mapped_column(String(200))
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class AuditEvent(Base):
+    """PII-minimized record of a successful or rejected state-changing API call."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    actor: Mapped[str] = mapped_column(String(200), index=True)
+    role: Mapped[str] = mapped_column(String(32))
+    method: Mapped[str] = mapped_column(String(12))
+    path: Mapped[str] = mapped_column(String(500), index=True)
+    status_code: Mapped[int] = mapped_column(Integer)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    resource_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

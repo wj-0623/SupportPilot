@@ -69,7 +69,30 @@ class HandoffConfig(BaseModel):
     urgent_minutes: int = Field(default=15, ge=1)
     normal_minutes: int = Field(default=240, ge=1)
     triggers: list[str] = Field(
-        default_factory=lambda: ["customer_request", "policy_exception", "low_confidence"]
+        default_factory=lambda: [
+            "customer_request",
+            "policy_exception",
+            "low_confidence",
+            "frustration",
+            "sensitive_topic",
+        ]
+    )
+    escalation_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "人工",
+            "投诉",
+            "太失望",
+            "非常生气",
+            "欺诈",
+            "律师",
+            "起诉",
+            "chargeback",
+            "fraud",
+            "human",
+        ]
+    )
+    urgent_keywords: list[str] = Field(
+        default_factory=lambda: ["律师", "起诉", "欺诈", "盗刷", "chargeback", "fraud"]
     )
 
 

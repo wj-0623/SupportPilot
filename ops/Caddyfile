@@ -1,5 +1,7 @@
 {$PUBLIC_DOMAIN} {
   encode zstd gzip
+  @internal path /metrics /openapi.json /docs*
+  respond @internal 404
   reverse_proxy api:8000
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"

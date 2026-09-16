@@ -6,8 +6,11 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
+
+from app.db.models import KnowledgeSource
 
 
 @dataclass(frozen=True)
@@ -45,8 +48,12 @@ def cosine(left: list[float], right: list[float]) -> float:
 
 
 class KnowledgeBase:
-    def __init__(self, knowledge_path: Path, catalog_path: Path) -> None:
-        self.documents = self._load(knowledge_path) + self._load(catalog_path)
+    def __init__(
+        self, knowledge_path: Path, catalog_path: Path, *, include_bundled: bool = True
+    ) -> None:
+        self.documents = (
+            self._load(knowledge_path) + self._load(catalog_path) if include_bundled else []
+        )
         self.document_tokens = [Counter(tokenize(self._searchable(doc))) for doc in self.documents]
         self.document_frequency = Counter(
             token for tokens in self.document_tokens for token in tokens
@@ -116,3 +123,28 @@ class KnowledgeBase:
                     )
                 )
         return sorted(scored, key=lambda hit: hit.score, reverse=True)[:limit]
+
+
+FRESHNESS_SENSITIVE_SOURCE_TYPES = {"url", "sitemap", "help-center", "catalog", "api"}
+
+
+def partition_fresh_knowledge(
+    sources: list[KnowledgeSource], freshness_hours: int, *, now: datetime | None = None
+) -> tuple[list[KnowledgeSource], list[KnowledgeSource]]:
+    """Separate usable knowledge from external sources that exceeded their freshness policy."""
+
+    cutoff = (now or datetime.now(UTC)) - timedelta(hours=freshness_hours)
+    fresh: list[KnowledgeSource] = []
+    stale: list[KnowledgeSource] = []
+    for source in sources:
+        metadata = json.loads(source.metadata_json)
+        expires = source.source_type in FRESHNESS_SENSITIVE_SOURCE_TYPES and not metadata.get(
+            "freshness_exempt", False
+        )
+        synced_at = (
+            source.synced_at.replace(tzinfo=UTC)
+            if source.synced_at.tzinfo is None
+            else source.synced_at
+        )
+        (stale if expires and synced_at < cutoff else fresh).append(source)
+    return fresh, stale

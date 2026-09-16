@@ -5,11 +5,20 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKS = ROOT / "domain_packs"
 
-VERTICALS = {
+
+class VerticalSpec(TypedDict):
+    name: str
+    product_keywords: list[str]
+    excluded_categories: list[str]
+    window_days: NotRequired[int]
+
+
+VERTICALS: dict[str, VerticalSpec] = {
     "apparel": {
         "name": "服饰电商客服",
         "product_keywords": ["尺码", "版型", "面料", "颜色", "搭配", "size", "fit"],

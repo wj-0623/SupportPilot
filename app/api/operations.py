@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -9,17 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.versions import POLICY_VERSION, PROMPT_VERSION, ROUTER_VERSION
 from app.core.config import Settings
 from app.core.security import Principal, principal_dependency
-from app.db.models import AgentRun, Feedback, RunReview
+from app.db.models import AgentRun, Feedback, RunReview, Ticket
 from app.db.platform_repository import PlatformRepository
 from app.db.repository import ConflictError, NotFoundError, SupportRepository
+from app.domain.config import DomainPackConfig
 from app.domain.guardrails import inspect_message
+from app.knowledge import partition_fresh_knowledge
 from app.metrics import FEEDBACK
 from app.ops.quality import build_quality_snapshot
 from app.schemas import (
     AgentRunResponse,
+    AuditEventResponse,
     EvaluationCandidateReviewRequest,
     FeedbackRequest,
     FeedbackResponse,
+    HandoffSnapshot,
+    KnowledgeHealthResponse,
     QualitySnapshot,
     RunReviewRequest,
     RunReviewResponse,
@@ -236,6 +243,101 @@ def create_operations_router(settings: Settings) -> APIRouter:
         outcomes = await platform_repo.list_outcomes(principal.tenant_id, limit=limit)
         actions = await platform_repo.list_actions(principal.tenant_id, limit=limit)
         return build_quality_snapshot(runs, feedback, reviews, outcomes, actions)
+
+    @router.get(
+        "/ops/audit-events",
+        response_model=list[AuditEventResponse],
+        tags=["operations"],
+    )
+    async def list_audit_events(
+        session: AsyncSession = Depends(get_session),
+        limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
+        principal: Principal = Depends(admin_auth),
+    ) -> list[AuditEventResponse]:
+        events = await PlatformRepository(session).list_audit_events(
+            principal.tenant_id, limit=limit
+        )
+        return [
+            AuditEventResponse(
+                id=event.id,
+                actor=event.actor,
+                role=event.role,
+                method=event.method,
+                path=event.path,
+                status_code=event.status_code,
+                request_id=event.request_id,
+                resource_id=event.resource_id,
+                created_at=event.created_at,
+            )
+            for event in events
+        ]
+
+    @router.get(
+        "/ops/knowledge-health",
+        response_model=KnowledgeHealthResponse,
+        tags=["operations"],
+    )
+    async def knowledge_health(
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> KnowledgeHealthResponse:
+        repo = PlatformRepository(session)
+        pack_revision = await repo.get_live_domain_pack(principal.tenant_id)
+        pack = DomainPackConfig.model_validate_json(pack_revision.config_json)
+        sources = await repo.list_live_knowledge(principal.tenant_id)
+        fresh, stale = partition_fresh_knowledge(sources, pack.knowledge.freshness_hours)
+        return KnowledgeHealthResponse(
+            live_sources=len(sources),
+            fresh_sources=len(fresh),
+            stale_sources=len(stale),
+            stale_source_keys=sorted({source.source_key for source in stale}),
+            freshness_hours=pack.knowledge.freshness_hours,
+        )
+
+    @router.get(
+        "/ops/handoffs",
+        response_model=HandoffSnapshot,
+        tags=["operations"],
+    )
+    async def handoff_snapshot(
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> HandoffSnapshot:
+        tickets = await PlatformRepository(session).list_scoped_tickets(
+            principal.tenant_id, status=None, limit=10_000
+        )
+        now = datetime.now(UTC)
+
+        def aware(value: datetime) -> datetime:
+            return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+        measurable = [
+            ticket
+            for ticket in tickets
+            if ticket.sla_due_at
+            and (ticket.first_response_at is not None or aware(ticket.sla_due_at) <= now)
+        ]
+
+        def missed_sla(ticket: Ticket) -> bool:
+            if ticket.sla_due_at is None:
+                return False
+            return ticket.first_response_at is None or aware(ticket.first_response_at) > aware(
+                ticket.sla_due_at
+            )
+
+        breached = [ticket for ticket in measurable if missed_sla(ticket)]
+        active_statuses = {"open", "in_progress", "waiting_customer", "reopened"}
+        return HandoffSnapshot(
+            total_tickets=len(tickets),
+            active_tickets=sum(ticket.status in active_statuses for ticket in tickets),
+            overdue_tickets=len(breached),
+            sla_compliance_rate=(
+                round((len(measurable) - len(breached)) / len(measurable), 4)
+                if measurable
+                else None
+            ),
+            by_priority=dict(Counter(ticket.priority for ticket in tickets)),
+        )
 
     @router.get("/ops/evaluation-candidates", tags=["operations"])
     async def list_evaluation_candidates(

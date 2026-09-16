@@ -106,6 +106,8 @@ class SupportRepository:
         reason: str,
         order_id: str | None = None,
         priority: str = "normal",
+        channel: str = "web",
+        sla_due_at: datetime | None = None,
     ) -> Ticket:
         await self.session.execute(
             select(Conversation.id).where(Conversation.id == conversation_id).with_for_update()
@@ -114,7 +116,7 @@ class SupportRepository:
             select(Ticket).where(
                 Ticket.conversation_id == conversation_id,
                 Ticket.order_id == order_id,
-                Ticket.status == "open",
+                Ticket.status.in_(["open", "in_progress", "waiting_customer", "reopened"]),
             )
         )
         if existing:
@@ -125,6 +127,8 @@ class SupportRepository:
             order_id=order_id,
             reason=reason,
             priority=priority,
+            channel=channel,
+            sla_due_at=sla_due_at,
         )
         self.session.add(ticket)
         await self.session.flush()

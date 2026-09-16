@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import defaultdict, deque
 from uuid import uuid4
@@ -9,7 +10,10 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.metrics import HTTP_LATENCY, HTTP_REQUESTS
+from app.db.platform_repository import PlatformRepository
+from app.metrics import AUDIT_EVENTS, HTTP_LATENCY, HTTP_REQUESTS
+
+logger = logging.getLogger(__name__)
 
 
 class RequestSizeLimitMiddleware:
@@ -67,6 +71,7 @@ class RequestSizeLimitMiddleware:
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get("X-Request-ID", str(uuid4()))[:128]
+        request.state.request_id = request_id
         start = time.perf_counter()
         response = await call_next(request)
         elapsed = time.perf_counter() - start
@@ -85,6 +90,68 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         )
         return response
+
+
+class AuditMiddleware(BaseHTTPMiddleware):
+    """Record privileged mutations without storing request bodies or credentials."""
+
+    AUDITED_PREFIXES = (
+        "/api/v1/admin/",
+        "/api/v1/actions",
+        "/api/v1/ops/",
+        "/api/v1/tickets/",
+    )
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        if request.method not in {
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        } or not request.url.path.startswith(self.AUDITED_PREFIXES):
+            return response
+        principal = getattr(request.state, "principal", None)
+        database = getattr(request.app.state, "database", None)
+        if principal is None or database is None:
+            return response
+        try:
+            async with database.sessions() as session:
+                await PlatformRepository(session).record_audit(
+                    tenant_id=principal.tenant_id,
+                    actor=principal.subject,
+                    role=principal.role,
+                    method=request.method,
+                    path=request.url.path,
+                    status_code=response.status_code,
+                    request_id=getattr(request.state, "request_id", None),
+                    resource_id=_resource_hint(request.url.path),
+                )
+                await session.commit()
+            AUDIT_EVENTS.labels(status="persisted").inc()
+        except Exception:
+            AUDIT_EVENTS.labels(status="failed").inc()
+            logger.exception("Failed to persist API audit event")
+        return response
+
+
+def _resource_hint(path: str) -> str | None:
+    ignored = {
+        "activate",
+        "approve",
+        "confirm",
+        "execute",
+        "promote",
+        "publish",
+        "resolve",
+        "review",
+        "rollback",
+        "sync",
+    }
+    for part in reversed(path.strip("/").split("/")):
+        if part not in ignored and part not in {"api", "v1", "admin", "ops", "actions", "tickets"}:
+            return part[:200]
+    return None
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -15,6 +16,8 @@ from app.connectors.generic_rest import validate_connector_url
 from app.connectors.shopify import ShopifyCommerceProvider
 from app.core.config import Settings
 from app.db.database import Database
+from app.db.models import KnowledgeSource
+from app.knowledge import KnowledgeBase, partition_fresh_knowledge
 from app.main import create_app
 
 JWT_SECRET = "v3-test-secret-that-is-longer-than-32-bytes"
@@ -266,6 +269,60 @@ def test_production_configuration_fails_closed() -> None:
     assert "PostgreSQL" in message
     assert "JWT_SECRET" in message
     assert "REDIS_URL" in message
+    assert "ENFORCE_TENANT_MEMBERSHIP" in message
+    assert "ENABLE_API_DOCS" in message
+
+
+def test_production_knowledge_does_not_include_demo_catalog() -> None:
+    settings = Settings()
+    knowledge = KnowledgeBase(
+        settings.knowledge_base_path, settings.catalog_path, include_bundled=False
+    )
+    assert knowledge.search("耳机和运费") == []
+
+
+def test_external_knowledge_freshness_policy_blocks_stale_sources() -> None:
+    stale_source = KnowledgeSource(
+        tenant_id="tenant-demo",
+        source_key="external-help",
+        source_type="help-center",
+        checksum="0" * 64,
+        content="配送说明",
+        metadata_json="{}",
+        synced_at=datetime.now(UTC) - timedelta(hours=25),
+    )
+    static_source = KnowledgeSource(
+        tenant_id="tenant-demo",
+        source_key="reviewed-policy",
+        source_type="text",
+        checksum="1" * 64,
+        content="人工审核政策",
+        metadata_json="{}",
+        synced_at=datetime.now(UTC) - timedelta(days=30),
+    )
+    fresh, stale = partition_fresh_knowledge([stale_source, static_source], 24)
+    assert [source.source_key for source in fresh] == ["reviewed-policy"]
+    assert [source.source_key for source in stale] == ["external-help"]
+
+
+def test_staff_access_can_require_active_tenant_membership() -> None:
+    settings = Settings(
+        app_env="test",
+        auth_mode="jwt",
+        enforce_tenant_membership=True,
+        jwt_secret=JWT_SECRET,
+        jwt_issuer="shopsage-test",
+        jwt_audience="shopsage-api",
+        database_url="sqlite+aiosqlite:///:memory:",
+        llm_enabled=False,
+    )
+    with TestClient(
+        create_app(settings=settings, database=Database(settings.database_url))
+    ) as client:
+        response = client.get(
+            "/api/v1/admin/domain-packs/templates", headers=bearer(token(role="admin"))
+        )
+    assert response.status_code == 403
 
 
 def test_negative_feedback_enters_human_reviewed_dataset_loop() -> None:
@@ -387,3 +444,96 @@ def test_chat_can_create_a_confirmable_cancel_plan() -> None:
             json={"confirmation_digest": action["confirmation_digest"]},
         )
         assert confirmed.json()["status"] == "queued"
+
+
+def test_signed_channel_message_is_processed_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "channel-webhook-secret-for-v3-tests"
+    monkeypatch.setenv("CHANNEL_WEBHOOK_SECRET", secret)
+    with build_v3_client() as client:
+        admin = bearer(token(role="admin"))
+        created = client.post(
+            "/api/v1/admin/connectors",
+            headers=admin,
+            json={
+                "name": "signed-channel",
+                "provider": "mock",
+                "capabilities": ["inbound_chat"],
+                "config": {"webhook_secret_ref": "env://CHANNEL_WEBHOOK_SECRET"},
+            },
+        )
+        assert created.status_code == 201
+        connector_id = created.json()["id"]
+        assert (
+            client.post(
+                f"/api/v1/admin/connectors/{connector_id}/activate", headers=admin
+            ).status_code
+            == 200
+        )
+        payload = {
+            "external_customer_id": "demo-001",
+            "external_conversation_id": "chat-42",
+            "message": "运费是多少？",
+            "locale": "zh-CN",
+        }
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        timestamp = str(int(time.time()))
+        signature = hmac.new(
+            secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+        ).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-Webhook-Timestamp": timestamp,
+            "X-Webhook-Signature": signature,
+            "X-Event-ID": "event-42",
+        }
+        first = client.post(
+            f"/api/v1/channels/{connector_id}/messages", headers=headers, content=body
+        )
+        second = client.post(
+            f"/api/v1/channels/{connector_id}/messages", headers=headers, content=body
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == second.json()
+        assert first.json()["conversation_id"]
+        assert "运费" in first.json()["reply"]
+
+
+def test_handoff_has_sla_assignment_transitions_and_audit() -> None:
+    with build_v3_client() as client:
+        customer = bearer(token(role="customer", customer_id="demo-001"))
+        admin = bearer(token(role="admin"))
+        chat = client.post(
+            "/api/v1/chat",
+            headers=customer,
+            json={"message": "我怀疑盗刷和欺诈，请转人工处理"},
+        )
+        assert chat.status_code == 200
+        ticket_id = chat.json()["ticket_id"]
+        tickets = client.get("/api/v1/tickets?status=open", headers=admin).json()
+        ticket = next(item for item in tickets if item["id"] == ticket_id)
+        assert ticket["priority"] == "urgent"
+        assert ticket["sla_due_at"]
+        started = client.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            headers=admin,
+            json={"status": "in_progress", "assigned_to": "agent-7"},
+        )
+        assert started.status_code == 200
+        assert started.json()["assigned_to"] == "agent-7"
+        assert started.json()["first_response_at"]
+        resolved = client.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            headers=admin,
+            json={"status": "resolved", "resolution": "已核实交易并协助冻结支付方式"},
+        )
+        assert resolved.status_code == 200
+        handoffs = client.get("/api/v1/ops/handoffs", headers=admin)
+        assert handoffs.status_code == 200
+        assert handoffs.json()["total_tickets"] == 1
+        knowledge_health = client.get("/api/v1/ops/knowledge-health", headers=admin)
+        assert knowledge_health.status_code == 200
+        assert knowledge_health.json()["stale_sources"] == 0
+        audit = client.get("/api/v1/ops/audit-events", headers=admin)
+        assert audit.status_code == 200
+        assert any(event["path"].endswith(ticket_id) for event in audit.json())

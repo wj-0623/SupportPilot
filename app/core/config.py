@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_api_key: str | None = None
     admin_api_key: str | None = None
     auth_mode: str = "development"
+    enforce_tenant_membership: bool = False
     jwt_secret: str | None = None
     jwt_jwks_url: str | None = None
     jwt_issuer: str = "shopsage"
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     max_message_chars: int = Field(default=4_000, ge=100, le=20_000)
     max_request_body_bytes: int = Field(default=2_000_000, ge=16_384, le=10_000_000)
     expose_debug_trace: bool = False
+    enable_api_docs: bool = True
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "shopsage-support-agent"
     knowledge_base_path: Path = ROOT_DIR / "data" / "knowledge_base.json"
@@ -78,12 +80,16 @@ class Settings(BaseSettings):
             errors.append("DATABASE_URL must use PostgreSQL in production")
         if self.auth_mode != "jwt":
             errors.append("AUTH_MODE must be jwt in production")
+        if not self.enforce_tenant_membership:
+            errors.append("ENFORCE_TENANT_MEMBERSHIP must be true in production")
         valid_secret = bool(self.jwt_secret and len(self.jwt_secret) >= 32)
         valid_jwks = bool(self.jwt_jwks_url and self.jwt_jwks_url.startswith("https://"))
         if not valid_secret and not valid_jwks:
             errors.append("configure HTTPS JWT_JWKS_URL or a JWT_SECRET of at least 32 characters")
         if self.app_api_key or self.admin_api_key:
             errors.append("legacy API keys must be disabled in production")
+        if self.enable_api_docs:
+            errors.append("ENABLE_API_DOCS must be false in production")
         if not self.redis_url:
             errors.append("REDIS_URL is required for production coordination")
         if any(origin == "*" for origin in self.cors_origins):

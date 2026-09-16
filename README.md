@@ -10,10 +10,10 @@ ShopSage V3 是面向真实商家接入的多租户电商客服系统。它用 *
 - **混合编排**：订单、售后、知识、多意图和交接走确定性工作流；模糊问题交给最多 N 步、只读工具白名单的 Agent。
 - **安全动作**：取消、改址、退换等动作必须经过权限检查、客户确认或人工审批、执行前状态重查、幂等调用和 outbox 审计。
 - **真实隔离**：JWT 的 tenant/customer/role claim 驱动查询；conversation、run、feedback、ticket、knowledge、connector、action 和 release 全部按租户过滤。
-- **知识治理**：租户知识 Draft/Live、版本、checksum、提示注入扫描、引用和无依据降级。
-- **人工协同**：内置工单及 Chatwoot 参考适配器；记录优先级、原因、处理结果和解决 outcome。
-- **执行—观测—优化**：OTel span、Prometheus、Grafana、脱敏 AgentRun、真实解决率/FCR、动作成功率、知识有据率；负反馈经人工接受后才进入版本化评测集。
-- **发布安全**：隔离 simulation、40 项离线黄金集、V3 集成测试、quality gate、release/canary、人工激活。
+- **知识治理**：租户知识 Draft/Live、版本、checksum、提示注入扫描、引用、外部知识新鲜度门禁和无依据降级；生产不会加载演示知识。
+- **全渠道与人工协同**：签名渠道消息入口支持外部客户/会话映射和事件幂等；工单具备负责人、状态流转、优先级、SLA 和 Chatwoot 异步交接。
+- **执行—观测—优化**：OTel span、Prometheus、Grafana、脱敏 AgentRun、租户审计、SLA、知识健康、真实解决率/FCR 和动作成功率；负反馈经人工接受后才进入版本化评测集。
+- **发布安全**：隔离 simulation、42 项离线黄金集、V3 集成测试、quality gate、release/canary、人工激活。
 - **生产交付**：Alembic、PostgreSQL、Redis 跨进程锁与限流、后台 Worker、Caddy TLS、健康检查、依赖锁、SBOM/安全扫描配置。
 
 ## 架构
@@ -77,7 +77,7 @@ python -m venv .venv
 }
 ```
 
-当前实现原生验证 HS256，也支持通过 HTTPS OIDC JWKS 验证 RS256/ES256；生产优先使用组织身份服务的 JWKS。生产环境还要求 PostgreSQL、Redis、非通配 CORS，并禁止 legacy API key。
+当前实现原生验证 HS256，也支持通过 HTTPS OIDC JWKS 验证 RS256/ES256；生产优先使用组织身份服务的 JWKS。员工和服务账号还必须存在于租户成员表，JWT 角色与成员角色必须一致。生产环境要求 PostgreSQL、Redis、非通配 CORS，禁用 legacy API key、Mock 连接器和公开 OpenAPI。
 
 ## Domain Pack
 
@@ -95,6 +95,8 @@ python -m venv .venv
 ## 连接器与写动作
 
 已实现 `mock`、`generic-rest`、Shopify GraphQL Admin 2026-07 和 Chatwoot 参考适配器。数据库只保存 `env://SECRET_NAME`，真实值由服务端 resolver 读取。
+
+第三方聊天、邮件或社媒渠道可调用签名入口 `POST /api/v1/channels/{connector_id}/messages`。系统用外部顾客 ID 和外部会话 ID 绑定内部租户资源，`X-Event-ID` 重试会返回同一结果，不会重复生成消息或动作。
 
 写动作 API：
 
@@ -114,6 +116,7 @@ python -m venv .venv
 - 客户确认解决率、FCR、reopen；
 - action success、connector latency；
 - grounded answer、citation；
+- handoff SLA、知识新鲜度和租户级变更审计；
 - prompt/router/policy/release 版本和节点轨迹。
 
 负反馈或低质量人工复核会生成只含 input hash 和结构化证据的 candidate。管理员接受 candidate 后才能生成新 dataset revision。新 Domain Pack 可通过 `/api/v1/admin/simulations/chat` 在独立数据库回放；simulation 不写线上工单、消息或动作。
@@ -130,7 +133,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip_audit -r requirements.lock
 ```
 
-离线门禁包含 40 个中文/英文、政策、隐私、提示注入、多轮和多意图场景；V3 集成测试覆盖 JWT 身份、资源归属、Domain Pack 发布、知识注入阻断、动作确认/重查/幂等、沙箱隔离和人工评测集闭环。
+离线门禁包含 42 个中文/英文、政策、隐私、提示注入、多轮、多意图、挫败情绪和欺诈升级场景；V3 集成测试覆盖 JWT 身份、租户成员、资源归属、签名渠道幂等、Domain Pack 发布、知识注入与过期阻断、工单 SLA、动作确认/重查/幂等、沙箱隔离和人工评测集闭环。
 CI 同时执行分支覆盖率检查，当前最低门槛为 55%，后续提交不得低于该基线。
 
 ## 生产部署

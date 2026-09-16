@@ -17,7 +17,13 @@ from app.core.security import (
     principal_dependency,
     verify_webhook_signature,
 )
-from app.db.models import ActionExecution, ConnectorDefinition, DomainPackRevision, KnowledgeSource
+from app.db.models import (
+    ActionExecution,
+    ConnectorDefinition,
+    DomainPackRevision,
+    KnowledgeSource,
+    Message,
+)
 from app.db.platform_repository import PlatformRepository
 from app.db.repository import ConflictError, NotFoundError
 from app.domain.config import DomainPackConfig
@@ -29,16 +35,55 @@ from app.schemas import (
     ActionConfirmRequest,
     ActionPlanRequest,
     ActionResponse,
+    ChannelMessageRequest,
+    ChannelMessageResponse,
+    ChatRequest,
     ConnectorCreateRequest,
     ConnectorResponse,
     DomainPackRevisionResponse,
     KnowledgeSourceCreateRequest,
     KnowledgeSourceResponse,
     KnowledgeSyncRequest,
+    PendingAction,
     ReleaseCreateRequest,
     ResolutionOutcomeRequest,
     SimulationRequest,
 )
+
+
+async def _verify_connector_webhook(
+    *,
+    request: Request,
+    session: AsyncSession,
+    connector_id: str,
+    signature: str,
+    timestamp_text: str,
+    settings: Settings,
+    required_capability: str | None = None,
+) -> tuple[ConnectorDefinition, bytes]:
+    if not signature or not timestamp_text:
+        raise HTTPException(status_code=401, detail="Signed webhook headers are required")
+    try:
+        timestamp = int(timestamp_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid webhook timestamp") from exc
+    if abs(int(time.time()) - timestamp) > settings.webhook_tolerance_seconds:
+        raise HTTPException(status_code=401, detail="Stale webhook")
+    connector = await session.get(ConnectorDefinition, connector_id)
+    if connector is None or connector.status != "live":
+        raise HTTPException(status_code=404, detail="Webhook connector not found")
+    capabilities = json.loads(connector.capabilities_json)
+    if required_capability and required_capability not in capabilities:
+        raise HTTPException(status_code=404, detail="Connector capability not found")
+    connector_config = json.loads(connector.config_json)
+    webhook_secret_ref = connector_config.get("webhook_secret_ref")
+    if not isinstance(webhook_secret_ref, str):
+        raise HTTPException(status_code=404, detail="Webhook secret is not configured")
+    secret = EnvironmentCredentialResolver().resolve(webhook_secret_ref)
+    body = await request.body()
+    if not verify_webhook_signature(body, signature, secret, timestamp_text):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    return connector, body
 
 
 def _domain_response(revision: DomainPackRevision) -> DomainPackRevisionResponse:
@@ -207,6 +252,10 @@ def create_platform_router(settings: Settings) -> APIRouter:
         session: AsyncSession = Depends(get_session),
         principal: Principal = Depends(admin_auth),
     ) -> ConnectorResponse:
+        if settings.is_production and payload.provider == "mock":
+            raise HTTPException(
+                status_code=422, detail="Mock connectors are disabled in production"
+            )
         if payload.provider != "mock" and not payload.credential_ref:
             raise HTTPException(
                 status_code=422, detail="External connectors require credential_ref"
@@ -242,6 +291,7 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 status_code=409,
                 detail="Live Domain Pack must allowlist every external connector host",
             )
+        provider = None
         try:
             provider = request.app.state.provider_registry.build(
                 connector,
@@ -255,6 +305,9 @@ def create_platform_router(settings: Settings) -> APIRouter:
             await session.commit()
         except (ValueError, RuntimeError, ConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            if provider is not None:
+                await provider.close()
         return _connector_response(connector)
 
     @router.post("/actions", response_model=ActionResponse, status_code=201, tags=["actions"])
@@ -534,28 +587,19 @@ def create_platform_router(settings: Settings) -> APIRouter:
         x_webhook_timestamp: Annotated[str, Header(min_length=1, max_length=20)] = "",
         x_event_id: Annotated[str, Header(min_length=1, max_length=200)] = "",
     ) -> dict[str, str]:
-        if not x_webhook_signature or not x_webhook_timestamp or not x_event_id:
+        if not x_event_id:
             raise HTTPException(status_code=401, detail="Signed webhook headers are required")
-        try:
-            timestamp = int(x_webhook_timestamp)
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Invalid webhook timestamp") from exc
-        if abs(int(time.time()) - timestamp) > settings.webhook_tolerance_seconds:
-            raise HTTPException(status_code=401, detail="Stale webhook")
-        body = await request.body()
-        connector = await session.get(ConnectorDefinition, connector_id)
-        if connector is None or connector.status != "live" or not connector.credential_ref:
-            raise HTTPException(status_code=404, detail="Webhook connector not found")
-        connector_config = json.loads(connector.config_json)
-        webhook_secret_ref = connector_config.get("webhook_secret_ref")
-        if not isinstance(webhook_secret_ref, str):
-            raise HTTPException(status_code=404, detail="Webhook secret is not configured")
-        secret = EnvironmentCredentialResolver().resolve(webhook_secret_ref)
-        valid = verify_webhook_signature(body, x_webhook_signature, secret, x_webhook_timestamp)
-        if not valid:
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        connector, body = await _verify_connector_webhook(
+            request=request,
+            session=session,
+            connector_id=connector_id,
+            signature=x_webhook_signature,
+            timestamp_text=x_webhook_timestamp,
+            settings=settings,
+        )
         event = await PlatformRepository(session).record_webhook(
             tenant_id=connector.tenant_id,
+            connector_id=connector.id,
             provider=connector.provider,
             external_id=x_event_id,
             payload_hash=hashlib.sha256(body).hexdigest(),
@@ -563,5 +607,107 @@ def create_platform_router(settings: Settings) -> APIRouter:
         )
         await session.commit()
         return {"id": event.id, "status": event.status}
+
+    @router.post(
+        "/channels/{connector_id}/messages",
+        response_model=ChannelMessageResponse,
+        tags=["channels"],
+    )
+    async def receive_channel_message(
+        request: Request,
+        connector_id: str,
+        payload: ChannelMessageRequest,
+        session: AsyncSession = Depends(get_session),
+        x_webhook_signature: Annotated[str, Header(min_length=32, max_length=256)] = "",
+        x_webhook_timestamp: Annotated[str, Header(min_length=1, max_length=20)] = "",
+        x_event_id: Annotated[str, Header(min_length=1, max_length=200)] = "",
+    ) -> ChannelMessageResponse:
+        if not x_event_id:
+            raise HTTPException(status_code=401, detail="Signed webhook headers are required")
+        connector, body = await _verify_connector_webhook(
+            request=request,
+            session=session,
+            connector_id=connector_id,
+            signature=x_webhook_signature,
+            timestamp_text=x_webhook_timestamp,
+            settings=settings,
+            required_capability="inbound_chat",
+        )
+        repo = PlatformRepository(session)
+        existing_event = await repo.get_webhook(connector.tenant_id, connector.id, x_event_id)
+        if existing_event:
+            if existing_event.status != "processed" or not existing_event.message_id:
+                raise HTTPException(status_code=409, detail="Webhook event is still processing")
+            message = await session.get(Message, existing_event.message_id)
+            if message is None or existing_event.conversation_id is None:
+                raise HTTPException(status_code=409, detail="Webhook result is unavailable")
+            metadata = json.loads(message.metadata_json)
+            pending_action = None
+            pending_action_id = metadata.get("pending_action_id")
+            if isinstance(pending_action_id, str):
+                action = await repo.get_action(connector.tenant_id, pending_action_id)
+                if action.confirmation_digest:
+                    pending_action = PendingAction(
+                        id=action.id,
+                        action=action.action,
+                        status=action.status,
+                        confirmation_digest=action.confirmation_digest,
+                    )
+            return ChannelMessageResponse(
+                event_id=existing_event.id,
+                conversation_id=existing_event.conversation_id,
+                message_id=message.id,
+                reply=message.content,
+                ticket_id=metadata.get("ticket_id"),
+                pending_action=pending_action,
+            )
+
+        lock_key = f"channel:{connector.id}:{payload.external_conversation_id}"
+        async with request.app.state.idempotency.lock(connector.tenant_id, lock_key) as acquired:
+            if not acquired:
+                raise HTTPException(status_code=409, detail="Channel conversation is busy")
+            customer_link = await repo.require_external_customer(
+                connector.tenant_id, payload.external_customer_id
+            )
+            mapping = await repo.get_channel_conversation(
+                connector.tenant_id, connector.id, payload.external_conversation_id
+            )
+            event = await repo.record_webhook(
+                tenant_id=connector.tenant_id,
+                connector_id=connector.id,
+                provider=connector.provider,
+                external_id=x_event_id,
+                payload_hash=hashlib.sha256(body).hexdigest(),
+                signature_valid=True,
+            )
+            response = await request.app.state.support_service.chat(
+                session,
+                ChatRequest(
+                    message=payload.message,
+                    conversation_id=mapping.conversation_id if mapping else None,
+                ),
+                f"channel:{connector.id}:{x_event_id}",
+                tenant_id=connector.tenant_id,
+                customer_id=customer_link.customer_id,
+                channel=connector.provider,
+            )
+            await repo.bind_channel_conversation(
+                connector.tenant_id,
+                connector.id,
+                payload.external_conversation_id,
+                response.conversation_id,
+            )
+            await repo.complete_webhook(
+                event, conversation_id=response.conversation_id, message_id=response.message_id
+            )
+            await session.commit()
+        return ChannelMessageResponse(
+            event_id=event.id,
+            conversation_id=response.conversation_id,
+            message_id=response.message_id,
+            reply=response.reply,
+            ticket_id=response.ticket_id,
+            pending_action=response.pending_action,
+        )
 
     return router

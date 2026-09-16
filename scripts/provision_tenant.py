@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import Settings
 from app.db.database import Database
-from app.db.models import DomainPackRevision, Tenant
+from app.db.models import DomainPackRevision, Tenant, TenantMember
 from app.domain.registry import DomainPackRegistry
 
 
@@ -38,6 +38,13 @@ async def provision(args: argparse.Namespace) -> None:
                 checksum=pack.checksum(),
                 created_by=args.created_by,
                 published_at=datetime.now(UTC) if args.publish else None,
+            )
+        )
+        session.add(
+            TenantMember(
+                tenant_id=tenant.id,
+                subject=args.created_by,
+                role="admin",
             )
         )
         await session.commit()

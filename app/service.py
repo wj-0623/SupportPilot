@@ -11,9 +11,11 @@ from app.agent.graph import SupportGraph
 from app.agent.versions import POLICY_VERSION, PROMPT_VERSION, ROUTER_VERSION
 from app.core.config import Settings
 from app.core.security import Principal
+from app.db.models import ActionExecution
 from app.db.platform_repository import PlatformRepository
 from app.db.repository import ConflictError, NotFoundError, SupportRepository
 from app.domain.config import DomainPackConfig
+from app.knowledge import partition_fresh_knowledge
 from app.metrics import AGENT_RUNS, CHAT_REQUESTS, HANDOFFS
 from app.schemas import ChatRequest, ChatResponse, Citation, PendingAction
 
@@ -34,6 +36,7 @@ class SupportService:
         *,
         tenant_id: str,
         customer_id: str,
+        channel: str = "web",
     ) -> ChatResponse:
         started = perf_counter()
         repo = SupportRepository(session)
@@ -45,6 +48,7 @@ class SupportService:
                     "customer_id": customer_id,
                     "message": request.message,
                     "conversation_id": request.conversation_id,
+                    "channel": channel,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -64,6 +68,9 @@ class SupportService:
             )
             domain_pack = DomainPackConfig.model_validate_json(live_pack_revision.config_json)
             live_knowledge = await platform_repo.list_live_knowledge(tenant_id)
+            live_knowledge, _stale_knowledge = partition_fresh_knowledge(
+                live_knowledge, domain_pack.knowledge.freshness_hours
+            )
             knowledge_documents = [
                 {
                     "id": f"tenant:{item.source_key}:v{item.version}",
@@ -90,6 +97,7 @@ class SupportService:
                     "domain_pack": domain_pack,
                     "knowledge_documents": knowledge_documents,
                     "conversation_id": conversation.id,
+                    "channel": channel,
                     "message": request.message,
                     "history": [
                         {"role": item.role, "content": item.content} for item in recent_messages
@@ -125,7 +133,7 @@ class SupportService:
             conversation.id,
             "user",
             result.get("sanitized_message", request.message),
-            metadata={"safety_reasons": result.get("safety_reasons", [])},
+            metadata={"safety_reasons": result.get("safety_reasons", []), "channel": channel},
         )
         pending_action: PendingAction | None = None
         proposed_action = result.get("proposed_action")
@@ -133,14 +141,10 @@ class SupportService:
             try:
                 action_name = str(proposed_action["action"])
                 connector = await platform_repo.find_live_connector(tenant_id, action_name)
-                execution = await self.action_service.plan(
+                execution = await self._plan_action(
                     session,
-                    principal=Principal(
-                        subject=f"customer:{customer_id}",
-                        tenant_id=tenant_id,
-                        role="customer",
-                        customer_id=customer_id,
-                    ),
+                    tenant_id=tenant_id,
+                    customer_id=customer_id,
                     pack=domain_pack,
                     connector_id=connector.id,
                     action=action_name,
@@ -162,6 +166,38 @@ class SupportService:
                 result["response"] += " 当前无法创建安全执行计划，已保留本次请求供人工处理。"
                 result.setdefault("trace", []).append(
                     f"action:planning_failed:{type(exc).__name__}"
+                )
+        if (
+            result.get("ticket_id")
+            and self.action_service
+            and domain_pack.handoff.provider != "internal"
+        ):
+            try:
+                connector = await platform_repo.find_live_connector(
+                    tenant_id, "handoff", provider=domain_pack.handoff.provider
+                )
+                await self._plan_action(
+                    session,
+                    tenant_id=tenant_id,
+                    customer_id=customer_id,
+                    pack=domain_pack,
+                    connector_id=connector.id,
+                    action="handoff",
+                    request={
+                        "summary": result.get("ticket_reason") or request.message,
+                        "priority": result.get("ticket_priority", "normal"),
+                        "custom_attributes": {
+                            "shopsage_ticket_id": result["ticket_id"],
+                            "shopsage_conversation_id": conversation.id,
+                        },
+                    },
+                    idempotency_key=f"handoff:{result['ticket_id']}",
+                    conversation_id=conversation.id,
+                )
+                result.setdefault("trace", []).append("handoff:connector_queued")
+            except (NotFoundError, ConflictError, RuntimeError) as exc:
+                result.setdefault("trace", []).append(
+                    f"handoff:connector_failed:{type(exc).__name__}"
                 )
         metadata = {
             "mode": result["mode"],
@@ -243,3 +279,34 @@ class SupportService:
         if response.ticket_id:
             HANDOFFS.labels(priority=result.get("ticket_priority", "normal")).inc()
         return response
+
+    async def _plan_action(
+        self,
+        session: AsyncSession,
+        *,
+        tenant_id: str,
+        customer_id: str,
+        pack: DomainPackConfig,
+        connector_id: str,
+        action: str,
+        request: dict[str, object],
+        idempotency_key: str,
+        conversation_id: str,
+    ) -> ActionExecution:
+        if self.action_service is None:
+            raise RuntimeError("Action service is unavailable")
+        return await self.action_service.plan(
+            session,
+            principal=Principal(
+                subject=f"customer:{customer_id}",
+                tenant_id=tenant_id,
+                role="customer",
+                customer_id=customer_id,
+            ),
+            pack=pack,
+            connector_id=connector_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            conversation_id=conversation_id,
+        )

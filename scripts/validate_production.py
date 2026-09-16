@@ -13,6 +13,8 @@ def main() -> int:
     settings = Settings(
         app_env="production",
         auth_mode="jwt",
+        enforce_tenant_membership=True,
+        enable_api_docs=False,
         database_url="postgresql+asyncpg://validator:validator@db/shopsage",
         redis_url="redis://:validator@redis:6379/0",
         jwt_secret="validation-only-secret-that-is-over-32-characters",

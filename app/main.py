@@ -26,12 +26,18 @@ from app.db.database import Database
 from app.db.seed import seed_demo_data
 from app.domain.registry import DomainPackRegistry
 from app.knowledge import KnowledgeBase
-from app.middleware import RateLimitMiddleware, RequestContextMiddleware, RequestSizeLimitMiddleware
+from app.middleware import (
+    AuditMiddleware,
+    RateLimitMiddleware,
+    RequestContextMiddleware,
+    RequestSizeLimitMiddleware,
+)
 from app.schemas import HealthResponse
 from app.service import SupportService
+from app.version import __version__
 
 STATIC_DIR = ROOT_DIR / "app" / "static"
-SCHEMA_REVISION = "20260915_0001"
+SCHEMA_REVISION = "20260916_0002"
 
 
 def create_app(settings: Settings | None = None, database: Database | None = None) -> FastAPI:
@@ -48,7 +54,9 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         else:
             await application_database.verify_revision(SCHEMA_REVISION)
         knowledge_base = KnowledgeBase(
-            application_settings.knowledge_base_path, application_settings.catalog_path
+            application_settings.knowledge_base_path,
+            application_settings.catalog_path,
+            include_bundled=not application_settings.is_production,
         )
         app.state.database = application_database
         app.state.settings = application_settings
@@ -74,7 +82,10 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     app = FastAPI(
         title=application_settings.app_name,
-        version="3.0.0",
+        version=__version__,
+        docs_url="/docs" if application_settings.enable_api_docs else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if application_settings.enable_api_docs else None,
         description=(
             "Multi-tenant hybrid e-commerce support platform with deterministic workflows, "
             "bounded agents, versioned Domain Packs and confirmed commerce actions."
@@ -86,6 +97,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         RequestSizeLimitMiddleware, max_bytes=application_settings.max_request_body_bytes
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(AuditMiddleware)
     app.add_middleware(
         RateLimitMiddleware, requests_per_minute=application_settings.rate_limit_per_minute
     )

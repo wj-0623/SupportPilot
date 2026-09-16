@@ -12,7 +12,7 @@ class CredentialResolver(Protocol):
 
 
 class EnvironmentCredentialResolver:
-    """Development resolver. Production deployments should inject a vault-backed resolver."""
+    """Resolve orchestrator-injected secrets without persisting secret values in the database."""
 
     def resolve(self, reference: str) -> str:
         match = _ENV_REF.fullmatch(reference)

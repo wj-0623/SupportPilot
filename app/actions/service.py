@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
@@ -22,6 +23,7 @@ from app.metrics import ACTION_EXECUTIONS, CONNECTOR_LATENCY
 
 TERMINAL_ACTION_STATES = {"succeeded", "failed", "cancelled"}
 tracer = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
 
 
 def action_digest(action: str, customer_id: str, request: dict[str, Any]) -> str:
@@ -226,6 +228,12 @@ class ActionService:
             CONNECTOR_LATENCY.labels(action=execution.action, provider=connector.provider).observe(
                 perf_counter() - started
             )
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close connector provider", extra={"provider": connector.provider}
+                )
         return execution
 
     async def _revalidate_state(

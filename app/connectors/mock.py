@@ -20,6 +20,9 @@ class MockCommerceProvider:
     async def healthcheck(self) -> bool:
         return True
 
+    async def close(self) -> None:
+        return None
+
     async def execute(
         self,
         action: str,

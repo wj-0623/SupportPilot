@@ -13,6 +13,7 @@ class SupportState(TypedDict, total=False):
     knowledge_documents: list[dict[str, str]]
     customer_id: str
     conversation_id: str
+    channel: str
     message: str
     sanitized_message: str
     history: list[dict[str, str]]

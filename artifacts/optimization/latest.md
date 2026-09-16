@@ -1,6 +1,6 @@
 # ShopSage optimization report
 
-Generated: 2026-09-15T14:47:38.647122+00:00
+Generated: 2026-09-16T02:00:31.108252+00:00
 Release decision: **CANARY**
 Reason: 离线门禁通过，但生产证据不足
 

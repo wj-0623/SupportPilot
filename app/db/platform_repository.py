@@ -14,6 +14,8 @@ from app.db.models import (
     AgentRelease,
     AgentRun,
     AgentRunScope,
+    AuditEvent,
+    ChannelConversation,
     ConnectorDefinition,
     Conversation,
     ConversationScope,
@@ -56,6 +58,20 @@ class PlatformRepository:
         )
         if link is None:
             raise NotFoundError("Customer not found")
+        return link
+
+    async def require_external_customer(
+        self, tenant_id: str, external_customer_id: str
+    ) -> TenantCustomer:
+        await self.get_tenant(tenant_id)
+        link = await self.session.scalar(
+            select(TenantCustomer).where(
+                TenantCustomer.tenant_id == tenant_id,
+                TenantCustomer.external_id == external_customer_id,
+            )
+        )
+        if link is None:
+            raise NotFoundError("External customer mapping not found")
         return link
 
     async def bind_conversation(self, tenant_id: str, conversation_id: str) -> None:
@@ -184,19 +200,90 @@ class PlatformRepository:
     async def resolve_scoped_ticket(
         self, tenant_id: str, ticket_id: str, resolution: str
     ) -> Ticket:
+        return await self.update_scoped_ticket(
+            tenant_id, ticket_id, status="resolved", resolution=resolution
+        )
+
+    async def update_scoped_ticket(
+        self,
+        tenant_id: str,
+        ticket_id: str,
+        *,
+        status: str | None = None,
+        assigned_to: str | None = None,
+        resolution: str | None = None,
+    ) -> Ticket:
         ticket = await self.session.scalar(
             select(Ticket)
             .join(ConversationScope, ConversationScope.conversation_id == Ticket.conversation_id)
             .where(Ticket.id == ticket_id, ConversationScope.tenant_id == tenant_id)
+            .with_for_update()
         )
         if ticket is None:
             raise NotFoundError("Ticket not found")
-        if ticket.status == "resolved":
+        transitions = {
+            "open": {"in_progress", "waiting_customer", "resolved"},
+            "in_progress": {"waiting_customer", "resolved"},
+            "waiting_customer": {"in_progress", "resolved"},
+            "resolved": {"reopened"},
+            "reopened": {"in_progress", "waiting_customer", "resolved"},
+        }
+        now = datetime.now(UTC)
+        if status == "resolved" and ticket.status == "resolved":
             raise ConflictError("Ticket is already resolved")
-        ticket.status = "resolved"
-        ticket.resolution = resolution
-        ticket.resolved_at = datetime.now(UTC)
+        if status and status != ticket.status:
+            if status not in transitions.get(ticket.status, set()):
+                raise ConflictError(f"Ticket cannot transition from {ticket.status} to {status}")
+            if status == "resolved" and not resolution:
+                raise ConflictError("Resolution is required when resolving a ticket")
+            ticket.status = status
+            if status in {"in_progress", "waiting_customer"} and ticket.first_response_at is None:
+                ticket.first_response_at = now
+            if status == "resolved":
+                ticket.resolution = resolution
+                ticket.resolved_at = now
+            elif status == "reopened":
+                ticket.resolution = None
+                ticket.resolved_at = None
+        if assigned_to is not None:
+            ticket.assigned_to = assigned_to
         return ticket
+
+    async def get_channel_conversation(
+        self, tenant_id: str, connector_id: str, external_conversation_id: str
+    ) -> ChannelConversation | None:
+        mapping: ChannelConversation | None = await self.session.scalar(
+            select(ChannelConversation).where(
+                ChannelConversation.tenant_id == tenant_id,
+                ChannelConversation.connector_id == connector_id,
+                ChannelConversation.external_conversation_id == external_conversation_id,
+            )
+        )
+        return mapping
+
+    async def bind_channel_conversation(
+        self,
+        tenant_id: str,
+        connector_id: str,
+        external_conversation_id: str,
+        conversation_id: str,
+    ) -> ChannelConversation:
+        existing = await self.get_channel_conversation(
+            tenant_id, connector_id, external_conversation_id
+        )
+        if existing:
+            if existing.conversation_id != conversation_id:
+                raise ConflictError("External conversation is already bound")
+            return existing
+        mapping = ChannelConversation(
+            tenant_id=tenant_id,
+            connector_id=connector_id,
+            external_conversation_id=external_conversation_id,
+            conversation_id=conversation_id,
+        )
+        self.session.add(mapping)
+        await self.session.flush()
+        return mapping
 
     async def create_domain_pack_draft(
         self, tenant_id: str, pack: DomainPackConfig, created_by: str
@@ -316,10 +403,16 @@ class PlatformRepository:
             )
         )
 
-    async def find_live_connector(self, tenant_id: str, action: str) -> ConnectorDefinition:
+    async def find_live_connector(
+        self, tenant_id: str, action: str, provider: str | None = None
+    ) -> ConnectorDefinition:
         connectors = await self.list_connectors(tenant_id)
         for connector in connectors:
-            if connector.status == "live" and action in json.loads(connector.capabilities_json):
+            if (
+                connector.status == "live"
+                and (provider is None or connector.provider == provider)
+                and action in json.loads(connector.capabilities_json)
+            ):
                 return connector
         raise NotFoundError(f"No live connector supports {action}")
 
@@ -704,6 +797,7 @@ class PlatformRepository:
         self,
         *,
         tenant_id: str,
+        connector_id: str,
         provider: str,
         external_id: str,
         payload_hash: str,
@@ -711,6 +805,7 @@ class PlatformRepository:
     ) -> WebhookEvent:
         event = WebhookEvent(
             tenant_id=tenant_id,
+            connector_id=connector_id,
             provider=provider,
             external_id=external_id,
             payload_hash=payload_hash,
@@ -723,6 +818,62 @@ class PlatformRepository:
         except IntegrityError as exc:
             raise ConflictError("Webhook event was already processed") from exc
         return event
+
+    async def get_webhook(
+        self, tenant_id: str, connector_id: str, external_id: str
+    ) -> WebhookEvent | None:
+        event: WebhookEvent | None = await self.session.scalar(
+            select(WebhookEvent).where(
+                WebhookEvent.tenant_id == tenant_id,
+                WebhookEvent.connector_id == connector_id,
+                WebhookEvent.external_id == external_id,
+            )
+        )
+        return event
+
+    async def complete_webhook(
+        self, event: WebhookEvent, *, conversation_id: str, message_id: str
+    ) -> None:
+        event.status = "processed"
+        event.conversation_id = conversation_id
+        event.message_id = message_id
+        event.processed_at = datetime.now(UTC)
+
+    async def record_audit(
+        self,
+        *,
+        tenant_id: str,
+        actor: str,
+        role: str,
+        method: str,
+        path: str,
+        status_code: int,
+        request_id: str | None,
+        resource_id: str | None = None,
+    ) -> AuditEvent:
+        event = AuditEvent(
+            tenant_id=tenant_id,
+            actor=actor,
+            role=role,
+            method=method,
+            path=path,
+            status_code=status_code,
+            request_id=request_id,
+            resource_id=resource_id,
+        )
+        self.session.add(event)
+        await self.session.flush()
+        return event
+
+    async def list_audit_events(self, tenant_id: str, limit: int = 200) -> list[AuditEvent]:
+        return list(
+            await self.session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.tenant_id == tenant_id)
+                .order_by(AuditEvent.created_at.desc())
+                .limit(limit)
+            )
+        )
 
     async def create_evaluation_candidate(
         self,
