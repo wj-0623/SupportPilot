@@ -508,6 +508,20 @@ def test_signed_channel_message_is_processed_once(monkeypatch: pytest.MonkeyPatc
         assert first.json()["conversation_id"]
         assert "运费" in first.json()["reply"]
 
+        changed_payload = {**payload, "message": "同一事件号但内容已变化"}
+        changed_body = json.dumps(
+            changed_payload, ensure_ascii=False, separators=(",", ":")
+        ).encode()
+        changed_signature = hmac.new(
+            secret.encode(), timestamp.encode() + b"." + changed_body, hashlib.sha256
+        ).hexdigest()
+        conflict = client.post(
+            f"/api/v1/channels/{connector_id}/messages",
+            headers={**headers, "X-Webhook-Signature": changed_signature},
+            content=changed_body,
+        )
+        assert conflict.status_code == 409
+
 
 def test_handoff_has_sla_assignment_transitions_and_audit() -> None:
     with build_v3_client() as client:
@@ -666,9 +680,31 @@ def test_identity_management_and_manual_channel_takeover(
                 content=body,
             )
 
+        original_enqueue = client.app.state.channel_delivery.enqueue_for_conversation
+        failed_once = False
+
+        async def fail_first_enqueue(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal failed_once
+            if not failed_once:
+                failed_once = True
+                raise RuntimeError("simulated crash after agent commit")
+            return await original_enqueue(*args, **kwargs)
+
+        monkeypatch.setattr(
+            client.app.state.channel_delivery,
+            "enqueue_for_conversation",
+            fail_first_enqueue,
+        )
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            send("v4-recovery-event", "运费是多少？")
+        recovered = send("v4-recovery-event", "运费是多少？")
+        assert recovered.status_code == 200
+        assert "运费" in recovered.json()["reply"]
+
         handoff = send("v4-event-1", "我要人工客服")
         assert handoff.status_code == 200
         assert handoff.json()["automation_state"] == "human"
+        assert send("v4-event-1", "我要人工客服").json() == handoff.json()
         run_count = len(client.get("/api/v1/ops/runs", headers=admin).json())
 
         human_managed = send("v4-event-2", "补充说明：包裹已经破损")
@@ -802,4 +838,71 @@ async def test_worker_delivers_durable_outbound_message(tmp_path: Path) -> None:
         assert delivered is not None
         assert delivered.status == "delivered"
         assert delivered.external_id
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_outbound_retry_budget_and_manual_retry(tmp_path: Path) -> None:
+    database_path = tmp_path / "outbound-retry.db"
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+aiosqlite:///{database_path.as_posix()}",
+        llm_enabled=False,
+    )
+    database = Database(settings.database_url)
+    await database.create_schema()
+    await seed_demo_data(database, settings)
+
+    async with database.sessions() as session:
+        support_repo = SupportRepository(session)
+        platform_repo = PlatformRepository(session)
+        conversation = await support_repo.get_or_create_conversation("demo-001", None)
+        await platform_repo.bind_conversation(settings.default_tenant_id, conversation.id)
+        connector = await platform_repo.find_live_connector(
+            settings.default_tenant_id, "outbound_chat"
+        )
+        message = await platform_repo.enqueue_outbound_message(
+            tenant_id=settings.default_tenant_id,
+            connector_id=connector.id,
+            conversation_id=conversation.id,
+            external_conversation_id="retry-channel-1",
+            content="需要重试的消息",
+            idempotency_key="outbound-retry-budget",
+        )
+        message_id = message.id
+        message.status = "sending"
+        message.attempts = 1
+        await platform_repo.mark_outbound_failed(
+            message, "temporary", max_attempts=3, retryable=True
+        )
+        assert message.status == "retryable"
+        assert message.attempts == 1
+        first_delay = (message.available_at - datetime.now(UTC)).total_seconds()
+
+        message.status = "sending"
+        message.attempts = 2
+        await platform_repo.mark_outbound_failed(
+            message, "temporary", max_attempts=3, retryable=True
+        )
+        assert message.status == "retryable"
+        assert message.attempts == 2
+        second_delay = (message.available_at - datetime.now(UTC)).total_seconds()
+        assert second_delay > first_delay
+
+        message.status = "sending"
+        message.attempts = 3
+        await platform_repo.mark_outbound_failed(
+            message, "temporary", max_attempts=3, retryable=True
+        )
+        assert message.status == "dead_letter"
+        await session.commit()
+
+    async with database.sessions() as session:
+        retried = await PlatformRepository(session).retry_outbound_message(
+            settings.default_tenant_id, message_id
+        )
+        assert retried.status == "retryable"
+        assert retried.attempts == 0
+        await session.commit()
+
     await database.dispose()

@@ -26,6 +26,8 @@
 
 建议初始 SLO：API 可用性 99.9%，5xx 小于 2%，P95 小于 2 秒，写动作成功率至少 98%，跨租户失败必须为 0。`ops/alerts.yaml` 提供 5xx、P95、动作失败和外发死信告警。真实解决率、FCR 和知识有据率通过 `/api/v1/ops/quality` 查看。
 
+API 在内部 `/metrics` 端点暴露 HTTP 与 Agent 指标。Worker 在 `WORKER_METRICS_PORT`（默认 `9100`）暴露动作执行和渠道投递指标；Prometheus 仅通过 Docker 内部网络抓取这两个目标。
+
 ## 备份与恢复
 
 - PostgreSQL：每天全量备份、持续 WAL 归档，至少每季度做一次独立环境恢复演练；

@@ -728,8 +728,14 @@ def create_platform_router(settings: Settings) -> APIRouter:
             required_capability="inbound_chat",
         )
         repo = PlatformRepository(session)
+        payload_hash = hashlib.sha256(body).hexdigest()
         existing_event = await repo.get_webhook(connector.tenant_id, connector.id, x_event_id)
         if existing_event:
+            if existing_event.payload_hash != payload_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Webhook event id was reused with a different payload",
+                )
             if existing_event.status != "processed" or not existing_event.message_id:
                 raise HTTPException(status_code=409, detail="Webhook event is still processing")
             message = await session.get(Message, existing_event.message_id)
@@ -752,7 +758,7 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 event_id=existing_event.id,
                 conversation_id=existing_event.conversation_id,
                 message_id=message.id,
-                reply="" if automation_state != "auto" else message.content,
+                reply="" if message.role == "user" else message.content,
                 ticket_id=metadata.get("ticket_id"),
                 pending_action=pending_action,
                 automation_state=automation_state,
@@ -768,19 +774,19 @@ def create_platform_router(settings: Settings) -> APIRouter:
             mapping = await repo.get_channel_conversation(
                 connector.tenant_id, connector.id, payload.external_conversation_id
             )
-            event = await repo.record_webhook(
-                tenant_id=connector.tenant_id,
-                connector_id=connector.id,
-                provider=connector.provider,
-                external_id=x_event_id,
-                payload_hash=hashlib.sha256(body).hexdigest(),
-                signature_valid=True,
-            )
             if mapping:
                 conversation = await repo.get_scoped_conversation_by_id(
                     connector.tenant_id, mapping.conversation_id
                 )
                 if conversation.automation_state != "auto":
+                    event = await repo.record_webhook(
+                        tenant_id=connector.tenant_id,
+                        connector_id=connector.id,
+                        provider=connector.provider,
+                        external_id=x_event_id,
+                        payload_hash=payload_hash,
+                        signature_valid=True,
+                    )
                     inspection = inspect_message(payload.message)
                     incoming = await SupportRepository(session).add_message(
                         conversation.id,
@@ -816,6 +822,14 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 tenant_id=connector.tenant_id,
                 customer_id=customer_link.customer_id,
                 channel=connector.provider,
+            )
+            event = await repo.record_webhook(
+                tenant_id=connector.tenant_id,
+                connector_id=connector.id,
+                provider=connector.provider,
+                external_id=x_event_id,
+                payload_hash=payload_hash,
+                signature_valid=True,
             )
             await repo.bind_channel_conversation(
                 connector.tenant_id,

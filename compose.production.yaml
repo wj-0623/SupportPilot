@@ -31,6 +31,7 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "app.worker"]
+    expose: ["9100"]
     depends_on:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}

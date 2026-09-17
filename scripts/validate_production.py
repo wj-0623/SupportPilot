@@ -45,6 +45,9 @@ def main() -> int:
     missing_services = [item.removesuffix(":") for item in required_services if item not in compose]
     if missing_services:
         raise RuntimeError(f"Production compose omits observability services: {missing_services}")
+    prometheus = (ROOT / "ops" / "prometheus.yaml").read_text(encoding="utf-8")
+    if "worker:9100" not in prometheus:
+        raise RuntimeError("Prometheus does not scrape worker action and delivery metrics")
     required_ops_files = [
         ROOT / "ops" / "tempo.yaml",
         ROOT / "ops" / "alertmanager.yaml",

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     action_lease_seconds: int = Field(default=300, ge=30, le=3_600)
     outbound_max_attempts: int = Field(default=5, ge=1, le=20)
     outbound_lease_seconds: int = Field(default=120, ge=30, le=3_600)
+    worker_metrics_port: int = Field(default=9_100, ge=1, le=65_535)
     knowledge_chunk_chars: int = Field(default=1_200, ge=200, le=8_000)
     knowledge_chunk_overlap: int = Field(default=120, ge=0, le=1_000)
     webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)

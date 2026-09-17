@@ -6,6 +6,7 @@ import signal
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
+from prometheus_client import start_http_server
 from sqlalchemy import and_, or_, select
 
 from app.actions.service import ActionService
@@ -118,6 +119,8 @@ async def run_worker() -> None:
     service = ActionService(settings, ProviderRegistry(EnvironmentCredentialResolver()))
     delivery = ChannelDeliveryService(settings, service.providers)
     stopping = asyncio.Event()
+    # The port is reachable only from the Compose internal network in production.
+    start_http_server(settings.worker_metrics_port, addr="0.0.0.0")  # nosec B104
     loop = asyncio.get_running_loop()
     for signal_name in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):

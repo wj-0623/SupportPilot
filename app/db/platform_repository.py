@@ -550,7 +550,6 @@ class PlatformRepository:
             message.status = "dead_letter"
             return
         message.status = "retryable"
-        message.attempts = 0
         delay_seconds = min(900, 2 ** min(message.attempts, 9))
         message.available_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
 
@@ -580,6 +579,7 @@ class PlatformRepository:
         if message.status != "dead_letter":
             raise ConflictError("Only dead-letter messages can be retried")
         message.status = "retryable"
+        message.attempts = 0
         message.available_at = datetime.now(UTC)
         message.error_code = None
         return message
