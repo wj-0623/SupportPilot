@@ -33,6 +33,17 @@ from app.worker import process_once
 JWT_SECRET = "v3-test-secret-that-is-longer-than-32-bytes"
 
 
+def test_settings_parse_comma_separated_cors_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:8000, http://127.0.0.1:8000")
+    settings = Settings(_env_file=None)
+    assert settings.cors_origins == [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+
+
 def token(*, role: str, customer_id: str | None = None, tenant_id: str = "tenant-demo") -> str:
     def encode(value: dict[str, object]) -> str:
         raw = json.dumps(value, separators=(",", ":")).encode()
