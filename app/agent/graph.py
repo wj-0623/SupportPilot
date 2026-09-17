@@ -23,6 +23,7 @@ from app.db.repository import NotFoundError
 from app.domain.guardrails import inspect_message
 from app.domain.intents import classify_intent, classify_intents, extract_order_id
 from app.domain.policies import evaluate_return
+from app.domain.routing import decide_route
 from app.knowledge import KnowledgeBase, KnowledgeHit
 from app.metrics import KNOWLEDGE_RETRIEVALS, NODE_LATENCY, TOOL_CALLS
 
@@ -133,16 +134,28 @@ class SupportGraph:
             {"handoff": "human_handoff", "done": END},
         )
         graph.add_conditional_edges(
+            "order_workflow",
+            self.after_business_workflow,
+            {"handoff": "human_handoff", "done": END},
+        )
+        graph.add_conditional_edges(
+            "knowledge_workflow",
+            self.after_business_workflow,
+            {"handoff": "human_handoff", "done": END},
+        )
+        graph.add_conditional_edges(
+            "change_order_workflow",
+            self.after_business_workflow,
+            {"handoff": "human_handoff", "done": END},
+        )
+        graph.add_conditional_edges(
             "dynamic_agent",
             self.after_business_workflow,
             {"handoff": "human_handoff", "done": END},
         )
         graph.add_edge("safety_reply", END)
-        graph.add_edge("order_workflow", END)
-        graph.add_edge("knowledge_workflow", END)
         graph.add_edge("human_handoff", END)
         graph.add_edge("multi_intent_workflow", END)
-        graph.add_edge("change_order_workflow", END)
         return graph.compile()
 
     @staticmethod
@@ -200,26 +213,30 @@ class SupportGraph:
 
     async def classify(self, state: SupportState) -> dict:
         pack = state.get("domain_pack")
-        patterns = pack.intent_patterns() if pack else None
-        if pack and pack.handoff.enabled:
-            patterns = dict(pack.intent_patterns())
-            existing = patterns.get("human_handoff", ())
-            patterns["human_handoff"] = tuple(
-                dict.fromkeys((*existing, *pack.handoff.escalation_keywords))
-            )
-        result = classify_intent(state["sanitized_message"], patterns)
-        results = classify_intents(
-            state["sanitized_message"],
-            patterns,
-            limit=pack.safety.max_intents_per_turn if pack else 3,
-        )
+        if pack:
+            decision = decide_route(state["sanitized_message"], pack)
+            result = decision.primary
+            results = list(decision.intents)
+            route = decision.route
+            routing_reason = decision.reason
+            patterns = pack.intent_patterns()
+        else:
+            patterns = None
+            result = classify_intent(state["sanitized_message"])
+            results = classify_intents(state["sanitized_message"], limit=3)
+            route = "workflow" if result.name != "general" else "agent"
+            routing_reason = "builtin_intent"
         change_intent = next((item for item in results if item.name == "cancel_or_change"), None)
         if change_intent:
             result = change_intent
             results = [change_intent]
+            route = "workflow"
+            routing_reason = "action_intent_priority"
         order_id = extract_order_id(state["sanitized_message"])
         if result.name == "general" and order_id:
             result = classify_intent("订单", patterns)
+            route = "workflow"
+            routing_reason = "order_id_context"
         order_id_inferred = False
         if not order_id:
             for message in reversed(state.get("history", [])):
@@ -231,10 +248,13 @@ class SupportGraph:
             "intent": result.name,
             "intents": [item.name for item in results],
             "confidence": result.confidence,
+            "route": route,
+            "routing_reason": routing_reason,
             "order_id": order_id,
             "order_id_inferred": order_id_inferred,
             "trace": [
                 f"route:{result.name}:{result.confidence:.2f}",
+                f"route_mode:{route}:{routing_reason}",
                 *(["context:order_id_inferred"] if order_id_inferred else []),
             ],
         }
@@ -251,6 +271,10 @@ class SupportGraph:
         "multi",
         "cancel_or_change",
     ]:
+        if state.get("route") == "handoff":
+            return "human_handoff"
+        if state.get("route") == "agent":
+            return "general"
         if len(state.get("intents", [])) > 1:
             return "multi"
         intent = state["intent"]
@@ -293,6 +317,8 @@ class SupportGraph:
                     ),
                     "mode": "workflow",
                     "citations": [],
+                    "needs_human": True,
+                    "ticket_reason": f"订单 {order.id} 无法自动取消，需要人工核验",
                     "trace": ["action:cancel_policy_denied"],
                 }
             return {
@@ -391,9 +417,11 @@ class SupportGraph:
             order = await repo.get_order(state["customer_id"], order_id)
         except NotFoundError:
             return {
-                "response": "没有找到该账户名下的订单。请检查订单号，或要求转人工核验。",
+                "response": "没有找到该账户名下的订单，已转人工安全核验。",
                 "mode": "workflow",
                 "citations": [],
+                "needs_human": True,
+                "ticket_reason": f"订单号 {order_id} 需要人工核验",
                 "trace": ["order:not_found_or_not_owned"],
             }
         tracking = f"，物流单号 {order.tracking_number}" if order.tracking_number else ""
@@ -411,7 +439,16 @@ class SupportGraph:
     async def return_workflow(self, state: SupportState) -> dict:
         repo = state["repo"]
         order_id = state.get("order_id")
-        policy_citation = [{"source_id": "policy:return-30d", "title": "30 天退货政策"}]
+        pack = state.get("domain_pack")
+        window_days = pack.policies.returns.window_days if pack else 30
+        pack_slug = pack.slug if pack else "builtin"
+        pack_version = state.get("domain_pack_version", 0)
+        policy_citation = [
+            {
+                "source_id": f"domain-pack:{pack_slug}:v{pack_version}:return-policy",
+                "title": f"退货政策（{window_days} 天）",
+            }
+        ]
         if not order_id:
             return {
                 "response": "请提供需要退货或退款的订单号，例如 ORD-1001。",
@@ -430,7 +467,6 @@ class SupportGraph:
                 "needs_human": False,
                 "trace": ["return:ownership_failed"],
             }
-        pack = state.get("domain_pack")
         return_policy = pack.policies.returns if pack else None
         decision = evaluate_return(
             order,
@@ -465,9 +501,11 @@ class SupportGraph:
         hits = self._search(state, state["sanitized_message"], limit=1)
         if not hits:
             return {
-                "response": "知识库里没有找到可靠答案，我可以为你转接人工客服。",
+                "response": "知识库里没有找到可靠答案，已转接人工客服。",
                 "mode": "workflow",
                 "citations": [],
+                "needs_human": True,
+                "ticket_reason": "知识库无可靠依据，需要人工回复",
                 "trace": ["knowledge:no_grounding"],
             }
         answer = "\n\n".join(hit.content for hit in hits)
@@ -485,15 +523,14 @@ class SupportGraph:
                 response = "\n\n".join(hit.content for hit in hits)
                 citations = [{"source_id": hit.source_id, "title": hit.title} for hit in hits]
             else:
-                response = (
-                    "我目前以离线模式运行。你可以询问订单状态、退货退款、配送、保修或商品信息；"
-                    "也可以在 .env 中配置 OPENAI_API_KEY 启用动态工具调用。"
-                )
+                response = "暂时没有找到可靠答案，已转接人工客服。"
                 citations = []
             return {
                 "response": response,
                 "mode": "offline_fallback",
                 "citations": citations,
+                "needs_human": not bool(hits),
+                "ticket_reason": "离线检索无可靠依据，需要人工回复",
                 "trace": ["agent:offline_fallback"],
             }
 

@@ -146,6 +146,9 @@ async def seed_demo_data(database: Database, settings: Settings | None = None) -
                             "cancel_order",
                             "change_address",
                             "handoff",
+                            "send_message",
+                            "inbound_chat",
+                            "outbound_chat",
                         ]
                     ),
                     config_json="{}",

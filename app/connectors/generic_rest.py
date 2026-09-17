@@ -54,6 +54,10 @@ class GenericRestCommerceProvider:
             follow_redirects=False,
         )
 
+    @property
+    def supported_actions(self) -> frozenset[str]:
+        return frozenset(self.actions)
+
     async def healthcheck(self) -> bool:
         try:
             response = await self.client.get(urljoin(self.base_url, "health"))

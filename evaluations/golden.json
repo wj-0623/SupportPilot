@@ -43,7 +43,7 @@
     "expected": {
       "intent": "order_status",
       "mode": "workflow",
-      "ticket": false,
+      "ticket": true,
       "must_contain": [
         "没有找到"
       ],
@@ -68,7 +68,7 @@
         "工单"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -87,7 +87,7 @@
         "人工客服"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -105,7 +105,7 @@
         "超过 30 天"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -135,7 +135,7 @@
       "电子产品保修多久？"
     ],
     "expected": {
-      "intent": "faq",
+      "intent": "product",
       "mode": "workflow",
       "ticket": false,
       "must_contain": [
@@ -227,9 +227,10 @@
     "expected": {
       "intent": "general",
       "mode": "offline_fallback",
-      "ticket": false,
+      "ticket": true,
       "must_contain": [
-        "离线模式"
+        "暂时没有找到可靠答案",
+        "工单"
       ]
     }
   },
@@ -353,7 +354,7 @@
         "工单"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -372,7 +373,7 @@
         "30 天退货期"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -391,7 +392,7 @@
         "超过 30 天"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -410,7 +411,7 @@
         "超过 30 天"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },
@@ -728,7 +729,7 @@
         "30 天退货期"
       ],
       "citation_ids": [
-        "policy:return-30d"
+        "domain-pack:general-commerce:v1:return-policy"
       ]
     }
   },

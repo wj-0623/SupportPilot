@@ -10,14 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.security import Principal, principal_dependency
 from app.db.platform_repository import PlatformRepository
-from app.db.repository import ConflictError, NotFoundError
+from app.db.repository import ConflictError, NotFoundError, SupportRepository
 from app.domain.guardrails import inspect_message
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    ConversationAutomationRequest,
     ConversationResponse,
     MessageResponse,
     ResolveTicketRequest,
+    TicketReplyRequest,
     TicketResponse,
     TicketUpdateRequest,
 )
@@ -130,6 +132,7 @@ def create_router(settings: Settings) -> APIRouter:
             id=conversation.id,
             customer_id=conversation.customer_id,
             status=conversation.status,
+            automation_state=conversation.automation_state,
             messages=[
                 MessageResponse(
                     id=message.id,
@@ -228,6 +231,94 @@ def create_router(settings: Settings) -> APIRouter:
         except ConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         return _ticket_response(ticket)
+
+    @router.patch(
+        "/conversations/{conversation_id}/automation",
+        response_model=ConversationResponse,
+        summary="Transfer a conversation between automation and staff",
+    )
+    async def update_conversation_automation(
+        conversation_id: str,
+        payload: ConversationAutomationRequest,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> ConversationResponse:
+        try:
+            conversation = await PlatformRepository(session).set_conversation_automation(
+                principal.tenant_id, conversation_id, payload.state
+            )
+            await session.commit()
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return ConversationResponse(
+            id=conversation.id,
+            customer_id=conversation.customer_id,
+            status=conversation.status,
+            automation_state=conversation.automation_state,
+            messages=[
+                MessageResponse(
+                    id=message.id,
+                    role=message.role,
+                    content=message.content,
+                    intent=message.intent,
+                    metadata=json.loads(message.metadata_json),
+                    created_at=message.created_at,
+                )
+                for message in conversation.messages
+            ],
+            created_at=conversation.created_at,
+            updated_at=conversation.updated_at,
+        )
+
+    @router.post(
+        "/tickets/{ticket_id}/reply",
+        summary="Reply to a customer through the bound channel",
+    )
+    async def reply_to_ticket(
+        request: Request,
+        ticket_id: str,
+        payload: TicketReplyRequest,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+        idempotency_key: Annotated[str, Header(min_length=8, max_length=128)] = "",
+    ) -> dict[str, str]:
+        if not idempotency_key:
+            raise HTTPException(status_code=422, detail="Idempotency-Key is required")
+        content = inspect_message(payload.content).sanitized_text
+        repo = PlatformRepository(session)
+        try:
+            ticket = await repo.get_scoped_ticket(principal.tenant_id, ticket_id)
+            queued = await request.app.state.channel_delivery.enqueue_for_conversation(
+                session,
+                tenant_id=principal.tenant_id,
+                conversation_id=ticket.conversation_id,
+                content=content,
+                idempotency_key=f"ticket-reply:{ticket.id}:{idempotency_key}",
+            )
+            if queued.message is None:
+                raise ConflictError(queued.reason)
+            if queued.reason == "already_queued":
+                return {
+                    "message_id": queued.message.source_message_id or "",
+                    "delivery_id": queued.message.id,
+                }
+            message = await SupportRepository(session).add_message(
+                ticket.conversation_id,
+                "assistant",
+                content,
+                metadata={"staff_reply": True, "actor": principal.subject},
+            )
+            queued.message.source_message_id = message.id
+            if ticket.status in {"open", "reopened"}:
+                await repo.update_scoped_ticket(
+                    principal.tenant_id, ticket.id, status="in_progress"
+                )
+            await session.commit()
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"message_id": message.id, "delivery_id": queued.message.id}
 
     @router.patch(
         "/tickets/{ticket_id}",

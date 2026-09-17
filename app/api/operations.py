@@ -27,6 +27,7 @@ from app.schemas import (
     FeedbackResponse,
     HandoffSnapshot,
     KnowledgeHealthResponse,
+    OutboundMessageResponse,
     QualitySnapshot,
     RunReviewRequest,
     RunReviewResponse,
@@ -271,6 +272,45 @@ def create_operations_router(settings: Settings) -> APIRouter:
             )
             for event in events
         ]
+
+    @router.get(
+        "/ops/outbound-messages",
+        response_model=list[OutboundMessageResponse],
+        tags=["operations"],
+    )
+    async def list_outbound_messages(
+        session: AsyncSession = Depends(get_session),
+        limit: Annotated[int, Query(ge=1, le=1_000)] = 100,
+        principal: Principal = Depends(admin_auth),
+    ) -> list[OutboundMessageResponse]:
+        messages = await PlatformRepository(session).list_outbound_messages(
+            principal.tenant_id, limit=limit
+        )
+        return [
+            OutboundMessageResponse.model_validate(message, from_attributes=True)
+            for message in messages
+        ]
+
+    @router.post(
+        "/ops/outbound-messages/{message_id}/retry",
+        response_model=OutboundMessageResponse,
+        tags=["operations"],
+    )
+    async def retry_outbound_message(
+        message_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> OutboundMessageResponse:
+        try:
+            message = await PlatformRepository(session).retry_outbound_message(
+                principal.tenant_id, message_id
+            )
+            await session.commit()
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return OutboundMessageResponse.model_validate(message, from_attributes=True)
 
     @router.get(
         "/ops/knowledge-health",

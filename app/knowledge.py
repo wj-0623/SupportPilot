@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from app.db.models import KnowledgeSource
 
@@ -126,6 +126,50 @@ class KnowledgeBase:
 
 
 FRESHNESS_SENSITIVE_SOURCE_TYPES = {"url", "sitemap", "help-center", "catalog", "api"}
+
+
+def chunk_knowledge_sources(
+    sources: list[KnowledgeSource],
+    *,
+    max_chars: int,
+    overlap: int,
+    locale: str | None = None,
+    external_product_id: str | None = None,
+) -> list[dict[str, str]]:
+    """Build bounded retrieval chunks while honoring optional source metadata filters."""
+
+    documents: list[dict[str, str]] = []
+    step = max(1, max_chars - min(overlap, max_chars - 1))
+    for source in sources:
+        metadata: dict[str, Any] = json.loads(source.metadata_json)
+        locales = metadata.get("locales")
+        product_ids = metadata.get("external_product_ids")
+        if locale and isinstance(locales, list) and locale not in locales:
+            continue
+        if (
+            external_product_id
+            and isinstance(product_ids, list)
+            and external_product_id not in product_ids
+        ):
+            continue
+        title = str(metadata.get("title", source.source_key))
+        content = source.content.strip()
+        if not content:
+            continue
+        for index, start in enumerate(range(0, len(content), step)):
+            chunk = content[start : start + max_chars].strip()
+            if not chunk:
+                continue
+            documents.append(
+                {
+                    "id": f"tenant:{source.source_key}:v{source.version}:c{index}",
+                    "title": title,
+                    "content": chunk,
+                }
+            )
+            if start + max_chars >= len(content):
+                break
+    return documents
 
 
 def partition_fresh_knowledge(

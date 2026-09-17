@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
@@ -15,6 +15,7 @@ from app.agent.graph import SupportGraph
 from app.api.operations import create_operations_router
 from app.api.platform import create_platform_router
 from app.api.router import create_router
+from app.channels.delivery import ChannelDeliveryService
 from app.connectors.credentials import EnvironmentCredentialResolver
 from app.connectors.registry import ProviderRegistry
 from app.core.config import ROOT_DIR, Settings, get_settings
@@ -37,7 +38,7 @@ from app.service import SupportService
 from app.version import __version__
 
 STATIC_DIR = ROOT_DIR / "app" / "static"
-SCHEMA_REVISION = "20260916_0002"
+SCHEMA_REVISION = "20260917_0003"
 
 
 def create_app(settings: Settings | None = None, database: Database | None = None) -> FastAPI:
@@ -63,6 +64,9 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.domain_registry = DomainPackRegistry(application_settings.domain_pack_dir)
         app.state.provider_registry = ProviderRegistry(EnvironmentCredentialResolver())
         app.state.action_service = ActionService(application_settings, app.state.provider_registry)
+        app.state.channel_delivery = ChannelDeliveryService(
+            application_settings, app.state.provider_registry
+        )
         app.state.coordinator = None
         if application_settings.redis_url:
             coordinator = RedisCoordinator(application_settings.redis_url)
@@ -105,7 +109,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         CORSMiddleware,
         allow_origins=application_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=[
             "Authorization",
             "Content-Type",
@@ -114,6 +118,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             "Idempotency-Key",
             "X-Webhook-Signature",
             "X-Webhook-Timestamp",
+            "X-Event-ID",
+            "X-Request-ID",
         ],
     )
     app.include_router(create_router(application_settings))
@@ -136,7 +142,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         )
 
     @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
-    async def ready(request: Request) -> HealthResponse:
+    async def ready(request: Request) -> Response:
         try:
             async with request.app.state.database.sessions() as session:
                 await session.execute(text("SELECT 1"))
@@ -145,13 +151,17 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                 coordinator is None or not await coordinator.ready()
             ):
                 raise RuntimeError("Redis is not ready")
-            status_value = "ok"
+            response = HealthResponse(
+                status="ok",
+                llm_mode="openai" if application_settings.llm_available else "offline",
+            )
+            return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
         except Exception:
-            status_value = "degraded"
-        return HealthResponse(
-            status=status_value,
-            llm_mode="openai" if application_settings.llm_available else "offline",
-        )
+            response = HealthResponse(
+                status="degraded",
+                llm_mode="openai" if application_settings.llm_available else "offline",
+            )
+            return JSONResponse(status_code=503, content=response.model_dump(mode="json"))
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics() -> Response:

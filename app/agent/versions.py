@@ -1,8 +1,8 @@
 """Version identifiers persisted with every run for reproducible evaluation."""
 
-PROMPT_VERSION = "support-agent-v3"
-ROUTER_VERSION = "domain-pack-router-v3"
-POLICY_VERSION = "domain-pack-policy-v3"
+PROMPT_VERSION = "support-agent-v4"
+ROUTER_VERSION = "domain-pack-router-v4"
+POLICY_VERSION = "domain-pack-policy-v4"
 
 SYSTEM_PROMPT = (
     "你是电商客服 SupportPilot。只能依据工具返回的数据回答，不能编造订单、政策或商品。"

@@ -17,6 +17,23 @@ class MockCommerceProvider:
         }
         self._results: dict[str, ConnectorResult] = {}
 
+    @property
+    def supported_actions(self) -> frozenset[str]:
+        return frozenset(
+            {
+                "get_order",
+                "list_orders",
+                "search_products",
+                "check_inventory",
+                "cancel_order",
+                "change_address",
+                "create_return",
+                "exchange_item",
+                "handoff",
+                "send_message",
+            }
+        )
+
     async def healthcheck(self) -> bool:
         return True
 
@@ -90,3 +107,13 @@ class MockCommerceProvider:
 
     def _handle_handoff(self, payload: dict[str, Any]) -> ConnectorResult:
         return ConnectorResult({"status": "queued", "reason": payload.get("reason")})
+
+    def _handle_send_message(self, payload: dict[str, Any]) -> ConnectorResult:
+        external_id = f"MSG-{len(self._results) + 1}"
+        return ConnectorResult(
+            {
+                "status": "delivered",
+                "conversation_id": payload.get("external_conversation_id"),
+            },
+            external_id=external_id,
+        )

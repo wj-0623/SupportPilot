@@ -63,6 +63,12 @@ class ActionService:
         if not customer_id:
             raise ConflictError("A customer context is required")
         customer_link = await repo.require_customer(principal.tenant_id, customer_id)
+        connector = await repo.get_connector(principal.tenant_id, connector_id)
+        declared_capabilities = set(json.loads(connector.capabilities_json))
+        if connector.status != "live" or action not in declared_capabilities:
+            raise ConflictError("Connector is not live or does not declare this action")
+        if action not in self.providers.supported_capabilities(connector):
+            raise ConflictError("Connector adapter does not implement this action")
         existing = await repo.get_action_by_key(principal.tenant_id, idempotency_key)
         if existing:
             expected = action_digest(action, customer_id, request)
@@ -172,14 +178,7 @@ class ActionService:
         if execution.next_attempt_at and execution.next_attempt_at > now:
             raise ConflictError("Action retry is not due yet")
         connector = await repo.get_connector(tenant_id, execution.connector_id)
-        if connector.status != "live":
-            raise ConflictError("Connector is not live")
-        provider = self.providers.build(
-            connector,
-            allowed_hosts=pack.safety.allowed_connector_hosts,
-            timeout_seconds=self.settings.connector_timeout_seconds,
-            max_retries=self.settings.connector_max_retries,
-        )
+        provider = None
         execution.status = "executing"
         execution.attempt_count += 1
         execution.next_attempt_at = None
@@ -187,13 +186,29 @@ class ActionService:
         request = json.loads(execution.request_json)
         started = perf_counter()
         try:
+            if connector.status != "live":
+                raise ConnectorError("connector_not_live", "Connector is not live", retryable=False)
+            provider = self.providers.build(
+                connector,
+                allowed_hosts=pack.safety.allowed_connector_hosts,
+                timeout_seconds=self.settings.connector_timeout_seconds,
+                max_retries=self.settings.connector_max_retries,
+            )
             with tracer.start_as_current_span("commerce.connector.execute") as span:
                 span.set_attribute("commerce.provider", connector.provider)
                 span.set_attribute("commerce.action", execution.action)
                 span.set_attribute("commerce.attempt", execution.attempt_count)
-                await self._revalidate_state(provider, execution.action, request, pack)
+                await self._revalidate_state(
+                    provider,
+                    execution.action,
+                    request,
+                    pack,
+                    idempotency_scope=f"{tenant_id}:{execution.id}",
+                )
                 result = await provider.execute(
-                    execution.action, request, idempotency_key=execution.idempotency_key
+                    execution.action,
+                    request,
+                    idempotency_key=f"{tenant_id}:{execution.idempotency_key}",
                 )
             execution.result_json = json.dumps(result.data, ensure_ascii=False)
             execution.status = "succeeded"
@@ -207,34 +222,66 @@ class ActionService:
                 {"action_id": execution.id, "external_id": result.external_id},
             )
         except ConnectorError as exc:
-            execution.error_code = exc.code
-            can_retry = (
-                exc.retryable and execution.attempt_count < self.settings.action_max_attempts
-            )
-            execution.status = "retryable" if can_retry else "failed"
-            if can_retry:
-                delay_seconds = min(300, 2**execution.attempt_count)
-                execution.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
-            ACTION_EXECUTIONS.labels(
-                action=execution.action, status=execution.status, provider=connector.provider
-            ).inc()
-            await repo.append_outbox(
+            await self._record_failure(
+                repo,
                 tenant_id,
-                execution.id,
-                "action.failed",
-                {"action_id": execution.id, "code": exc.code, "retryable": can_retry},
+                execution,
+                provider_name=connector.provider,
+                code=exc.code,
+                retryable=exc.retryable,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Connector setup or execution failed unexpectedly",
+                extra={"provider": connector.provider, "action": execution.action},
+            )
+            await self._record_failure(
+                repo,
+                tenant_id,
+                execution,
+                provider_name=connector.provider,
+                code=type(exc).__name__,
+                retryable=False,
             )
         finally:
             CONNECTOR_LATENCY.labels(action=execution.action, provider=connector.provider).observe(
                 perf_counter() - started
             )
-            try:
-                await provider.close()
-            except Exception:
-                logger.exception(
-                    "Failed to close connector provider", extra={"provider": connector.provider}
-                )
+            if provider is not None:
+                try:
+                    await provider.close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close connector provider",
+                        extra={"provider": connector.provider},
+                    )
         return execution
+
+    async def _record_failure(
+        self,
+        repo: PlatformRepository,
+        tenant_id: str,
+        execution: ActionExecution,
+        *,
+        provider_name: str,
+        code: str,
+        retryable: bool,
+    ) -> None:
+        execution.error_code = code[:100]
+        can_retry = retryable and execution.attempt_count < self.settings.action_max_attempts
+        execution.status = "retryable" if can_retry else "failed"
+        if can_retry:
+            delay_seconds = min(300, 2**execution.attempt_count)
+            execution.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+        ACTION_EXECUTIONS.labels(
+            action=execution.action, status=execution.status, provider=provider_name
+        ).inc()
+        await repo.append_outbox(
+            tenant_id,
+            execution.id,
+            "action.failed",
+            {"action_id": execution.id, "code": code, "retryable": can_retry},
+        )
 
     async def _revalidate_state(
         self,
@@ -242,11 +289,15 @@ class ActionService:
         action: str,
         request: dict[str, Any],
         pack: DomainPackConfig,
+        *,
+        idempotency_scope: str,
     ) -> None:
         if action not in {"cancel_order", "change_address", "create_return", "exchange_item"}:
             return
         result = await provider.execute(
-            "get_order", request, idempotency_key=f"preflight:{request.get('order_id')}"
+            "get_order",
+            request,
+            idempotency_key=f"preflight:{idempotency_scope}:{request.get('order_id')}",
         )
         status = result.data.get("status")
         if action == "cancel_order" and status not in pack.policies.cancellations_allowed_statuses:

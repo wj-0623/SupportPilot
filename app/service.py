@@ -15,7 +15,7 @@ from app.db.models import ActionExecution
 from app.db.platform_repository import PlatformRepository
 from app.db.repository import ConflictError, NotFoundError, SupportRepository
 from app.domain.config import DomainPackConfig
-from app.knowledge import partition_fresh_knowledge
+from app.knowledge import chunk_knowledge_sources, partition_fresh_knowledge
 from app.metrics import AGENT_RUNS, CHAT_REQUESTS, HANDOFFS
 from app.schemas import ChatRequest, ChatResponse, Citation, PendingAction
 
@@ -49,6 +49,8 @@ class SupportService:
                     "message": request.message,
                     "conversation_id": request.conversation_id,
                     "channel": channel,
+                    "locale": request.locale,
+                    "external_product_id": request.external_product_id,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -71,14 +73,13 @@ class SupportService:
             live_knowledge, _stale_knowledge = partition_fresh_knowledge(
                 live_knowledge, domain_pack.knowledge.freshness_hours
             )
-            knowledge_documents = [
-                {
-                    "id": f"tenant:{item.source_key}:v{item.version}",
-                    "title": json.loads(item.metadata_json).get("title", item.source_key),
-                    "content": item.content,
-                }
-                for item in live_knowledge
-            ]
+            knowledge_documents = chunk_knowledge_sources(
+                live_knowledge,
+                max_chars=self.settings.knowledge_chunk_chars,
+                overlap=self.settings.knowledge_chunk_overlap,
+                locale=request.locale,
+                external_product_id=request.external_product_id,
+            )
             if scoped_idempotency_key:
                 cached = await repo.get_idempotent_response(scoped_idempotency_key, request_hash)
                 if cached:
@@ -88,6 +89,10 @@ class SupportService:
                 customer_id, request.conversation_id
             )
             await platform_repo.bind_conversation(tenant_id, conversation.id)
+            if request.conversation_id and conversation.automation_state != "auto":
+                raise ConflictError(
+                    f"Conversation is currently managed in {conversation.automation_state} mode"
+                )
             conversation_id = conversation.id
             recent_messages = await repo.recent_messages(conversation.id)
             result = await self.graph.compiled.ainvoke(
@@ -96,8 +101,12 @@ class SupportService:
                     "customer_id": customer_id,
                     "domain_pack": domain_pack,
                     "knowledge_documents": knowledge_documents,
+                    "domain_pack_revision_id": live_pack_revision.id,
+                    "domain_pack_version": live_pack_revision.version,
                     "conversation_id": conversation.id,
                     "channel": channel,
+                    "locale": request.locale or domain_pack.default_locale,
+                    "external_product_id": request.external_product_id,
                     "message": request.message,
                     "history": [
                         {"role": item.role, "content": item.content} for item in recent_messages
@@ -163,7 +172,15 @@ class SupportService:
                     confirmation_digest=execution.confirmation_digest,
                 )
             except (NotFoundError, ConflictError, RuntimeError) as exc:
-                result["response"] += " 当前无法创建安全执行计划，已保留本次请求供人工处理。"
+                ticket = await repo.create_ticket(
+                    conversation_id=conversation.id,
+                    customer_id=customer_id,
+                    reason=f"安全执行计划创建失败：{type(exc).__name__}",
+                    channel=channel,
+                )
+                result["ticket_id"] = ticket.id
+                result["ticket_reason"] = ticket.reason
+                result["response"] += " 当前无法创建安全执行计划，已转交人工处理。"
                 result.setdefault("trace", []).append(
                     f"action:planning_failed:{type(exc).__name__}"
                 )
@@ -205,6 +222,7 @@ class SupportService:
             "trace": result.get("trace", []),
             "ticket_id": result.get("ticket_id"),
             "pending_action_id": pending_action.id if pending_action else None,
+            "automation_state": "human" if result.get("ticket_id") else "auto",
         }
         assistant_message = await repo.add_message(
             conversation.id,

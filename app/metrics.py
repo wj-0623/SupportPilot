@@ -28,3 +28,8 @@ KNOWLEDGE_RETRIEVALS = Counter(
     "supportpilot_knowledge_retrievals_total", "Knowledge retrieval results", ["grounded"]
 )
 AUDIT_EVENTS = Counter("supportpilot_audit_events_total", "Persisted API audit events", ["status"])
+OUTBOUND_DELIVERIES = Counter(
+    "supportpilot_outbound_deliveries_total",
+    "Customer-facing channel delivery outcomes",
+    ["status", "provider"],
+)

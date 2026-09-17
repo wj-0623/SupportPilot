@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import cast
 from uuid import uuid4
 
 from redis.asyncio import Redis
@@ -38,7 +37,12 @@ class RedisCoordinator:
 
     async def allow(self, key: str, limit: int, window_seconds: int = 60) -> bool:
         redis_key = f"supportpilot:rate:{key}"
-        count = await self.client.incr(redis_key)
-        if count == 1:
-            await self.client.expire(redis_key, window_seconds)
-        return cast(bool, count <= limit)
+        count = await self.client.eval(
+            "local count = redis.call('incr', KEYS[1]); "
+            "if count == 1 then redis.call('expire', KEYS[1], ARGV[1]); end; "
+            "return count",
+            1,
+            redis_key,
+            window_seconds,
+        )
+        return int(count) <= limit

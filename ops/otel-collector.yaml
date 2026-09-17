@@ -9,11 +9,11 @@ processors:
     limit_mib: 256
   batch: {}
 exporters:
-  debug:
-    verbosity: basic
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [debug]
+      exporters: [otlphttp/tempo]

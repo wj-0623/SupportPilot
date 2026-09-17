@@ -10,7 +10,7 @@ x-app: &app
     REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
   restart: unless-stopped
-  networks: [backend]
+  networks: [backend, egress]
 
 services:
   migrate:
@@ -46,7 +46,7 @@ services:
     ports: ["80:80", "443:443"]
     depends_on: [api]
     restart: unless-stopped
-    networks: [backend]
+    networks: [frontend, backend]
 
   postgres:
     image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to an immutable digest}
@@ -82,6 +82,15 @@ services:
     restart: unless-stopped
     networks: [backend]
 
+  tempo:
+    image: ${TEMPO_IMAGE:?Set TEMPO_IMAGE to an immutable digest}
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./ops/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+    restart: unless-stopped
+    networks: [backend]
+
   prometheus:
     image: ${PROMETHEUS_IMAGE:?Set PROMETHEUS_IMAGE to an immutable digest}
     volumes:
@@ -90,6 +99,16 @@ services:
       - prometheus_data:/prometheus
     restart: unless-stopped
     networks: [backend]
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:?Set ALERTMANAGER_IMAGE to an immutable digest}
+    command: ["--config.file=/etc/alertmanager/config.yml"]
+    volumes:
+      - ./ops/alertmanager.yaml:/etc/alertmanager/config.yml:ro
+      - alertmanager_data:/alertmanager
+    secrets: [alert_webhook_url]
+    restart: unless-stopped
+    networks: [backend, egress]
 
   grafana:
     image: ${GRAFANA_IMAGE:?Set GRAFANA_IMAGE to an immutable digest}
@@ -104,8 +123,14 @@ services:
     networks: [backend]
 
 networks:
+  frontend:
   backend:
-    internal: false
+    internal: true
+  egress:
+
+secrets:
+  alert_webhook_url:
+    file: ${ALERT_WEBHOOK_URL_FILE:?Set ALERT_WEBHOOK_URL_FILE}
 
 volumes:
   postgres_data:
@@ -114,3 +139,5 @@ volumes:
   caddy_config:
   prometheus_data:
   grafana_data:
+  tempo_data:
+  alertmanager_data:

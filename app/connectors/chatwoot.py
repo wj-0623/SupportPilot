@@ -30,6 +30,10 @@ class ChatwootHelpdeskProvider:
             follow_redirects=False,
         )
 
+    @property
+    def supported_actions(self) -> frozenset[str]:
+        return frozenset({"handoff", "send_message"})
+
     async def create_handoff(
         self,
         *,
@@ -86,6 +90,24 @@ class ChatwootHelpdeskProvider:
         *,
         idempotency_key: str,
     ) -> ConnectorResult:
+        if action == "send_message":
+            try:
+                conversation_id = str(payload["external_conversation_id"])
+                response = await self.client.post(
+                    f"{self.base_url}api/v1/accounts/{self.account_id}/conversations/"
+                    f"{conversation_id}/messages",
+                    json={"content": str(payload["content"]), "message_type": "outgoing"},
+                    headers={"Idempotency-Key": idempotency_key},
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+                raise ConnectorError(
+                    "chatwoot_delivery_failed",
+                    "Chatwoot message delivery failed",
+                    retryable=True,
+                ) from exc
+            return ConnectorResult(data, external_id=str(data.get("id", "")) or None)
         if action != "handoff":
             raise ConnectorError("unsupported_action", f"Chatwoot does not support {action}")
         attributes = dict(payload.get("custom_attributes", {}))

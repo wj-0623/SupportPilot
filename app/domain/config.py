@@ -143,6 +143,7 @@ class DomainPackConfig(BaseModel):
         unknown = set(self.workflow_order) - set(intent_names)
         if unknown:
             raise ValueError(f"workflow_order references unknown intents: {sorted(unknown)}")
+        self.workflow_order = list(dict.fromkeys([*self.workflow_order, *intent_names]))
         return self
 
     def checksum(self) -> str:
@@ -152,7 +153,12 @@ class DomainPackConfig(BaseModel):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def intent_patterns(self) -> dict[str, tuple[str, ...]]:
-        return {item.name: tuple(item.keywords) for item in self.intents}
+        patterns = {item.name: tuple(item.keywords) for item in self.intents}
+        if self.handoff.enabled and "human_handoff" in patterns:
+            patterns["human_handoff"] = tuple(
+                dict.fromkeys((*patterns["human_handoff"], *self.handoff.escalation_keywords))
+            )
+        return patterns
 
     def tool_permission(self, action: str) -> ToolPermission | None:
         return next((item for item in self.tools if item.action == action), None)

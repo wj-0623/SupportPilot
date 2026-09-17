@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.actions.service import ActionService
+from app.agent.versions import POLICY_VERSION, PROMPT_VERSION, ROUTER_VERSION
 from app.connectors.credentials import EnvironmentCredentialResolver
 from app.core.config import Settings
 from app.core.security import (
@@ -25,7 +26,7 @@ from app.db.models import (
     Message,
 )
 from app.db.platform_repository import PlatformRepository
-from app.db.repository import ConflictError, NotFoundError
+from app.db.repository import ConflictError, NotFoundError, SupportRepository
 from app.domain.config import DomainPackConfig
 from app.domain.guardrails import inspect_message
 from app.domain.registry import DomainPackRegistry
@@ -40,6 +41,8 @@ from app.schemas import (
     ChatRequest,
     ConnectorCreateRequest,
     ConnectorResponse,
+    CustomerMappingRequest,
+    CustomerMappingResponse,
     DomainPackRevisionResponse,
     KnowledgeSourceCreateRequest,
     KnowledgeSourceResponse,
@@ -48,6 +51,8 @@ from app.schemas import (
     ReleaseCreateRequest,
     ResolutionOutcomeRequest,
     SimulationRequest,
+    TenantMemberRequest,
+    TenantMemberResponse,
 )
 
 
@@ -241,6 +246,87 @@ def create_platform_router(settings: Settings) -> APIRouter:
         connectors = await PlatformRepository(session).list_connectors(principal.tenant_id)
         return [_connector_response(item) for item in connectors]
 
+    @router.get(
+        "/admin/customer-mappings",
+        response_model=list[CustomerMappingResponse],
+        tags=["identity"],
+    )
+    async def list_customer_mappings(
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(staff_auth),
+    ) -> list[CustomerMappingResponse]:
+        mappings = await PlatformRepository(session).list_customer_mappings(principal.tenant_id)
+        return [
+            CustomerMappingResponse.model_validate(item, from_attributes=True) for item in mappings
+        ]
+
+    @router.post(
+        "/admin/customer-mappings",
+        response_model=CustomerMappingResponse,
+        status_code=201,
+        tags=["identity"],
+    )
+    async def upsert_customer_mapping(
+        payload: CustomerMappingRequest,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> CustomerMappingResponse:
+        try:
+            mapping = await PlatformRepository(session).upsert_customer_mapping(
+                tenant_id=principal.tenant_id,
+                connector_id=payload.connector_id,
+                external_id=payload.external_id,
+                customer_id=payload.customer_id,
+                name=payload.name,
+                email=payload.email,
+            )
+            await session.commit()
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return CustomerMappingResponse.model_validate(mapping, from_attributes=True)
+
+    @router.get("/admin/members", response_model=list[TenantMemberResponse], tags=["identity"])
+    async def list_members(
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> list[TenantMemberResponse]:
+        members = await PlatformRepository(session).list_members(principal.tenant_id)
+        return [TenantMemberResponse.model_validate(item, from_attributes=True) for item in members]
+
+    @router.post(
+        "/admin/members",
+        response_model=TenantMemberResponse,
+        status_code=201,
+        tags=["identity"],
+    )
+    async def upsert_member(
+        payload: TenantMemberRequest,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(admin_auth),
+    ) -> TenantMemberResponse:
+        if payload.role == "customer" and not payload.customer_id:
+            raise HTTPException(status_code=422, detail="Customer members require customer_id")
+        if payload.role != "customer" and payload.customer_id:
+            raise HTTPException(
+                status_code=422, detail="Only customer members may include customer_id"
+            )
+        if payload.customer_id:
+            try:
+                await PlatformRepository(session).require_customer(
+                    principal.tenant_id, payload.customer_id
+                )
+            except NotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        member = await PlatformRepository(session).upsert_member(
+            tenant_id=principal.tenant_id,
+            subject=payload.subject,
+            role=payload.role,
+            customer_id=payload.customer_id,
+            active=payload.active,
+        )
+        await session.commit()
+        return TenantMemberResponse.model_validate(member, from_attributes=True)
+
     @router.post(
         "/admin/connectors",
         response_model=ConnectorResponse,
@@ -286,6 +372,14 @@ def create_platform_router(settings: Settings) -> APIRouter:
         repo = PlatformRepository(session)
         connector = await repo.get_connector(principal.tenant_id, connector_id)
         pack = await live_pack(session, principal.tenant_id)
+        declared = set(json.loads(connector.capabilities_json))
+        supported = request.app.state.provider_registry.supported_capabilities(connector)
+        unsupported = sorted(declared - supported)
+        if unsupported:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Connector adapter does not implement: {', '.join(unsupported)}",
+            )
         if connector.provider != "mock" and not pack.safety.allowed_connector_hosts:
             raise HTTPException(
                 status_code=409,
@@ -476,9 +570,9 @@ def create_platform_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=404, detail="Domain Pack revision not found")
         artifact = {
             "domain_pack_checksum": revision.checksum,
-            "prompt_version": "support-v3",
-            "router_version": "hybrid-router-v3",
-            "policy_version": "domain-pack-v3",
+            "prompt_version": PROMPT_VERSION,
+            "router_version": ROUTER_VERSION,
+            "policy_version": POLICY_VERSION,
         }
         try:
             release = await PlatformRepository(session).create_release(
@@ -642,6 +736,7 @@ def create_platform_router(settings: Settings) -> APIRouter:
             if message is None or existing_event.conversation_id is None:
                 raise HTTPException(status_code=409, detail="Webhook result is unavailable")
             metadata = json.loads(message.metadata_json)
+            automation_state = str(metadata.get("automation_state", "auto"))
             pending_action = None
             pending_action_id = metadata.get("pending_action_id")
             if isinstance(pending_action_id, str):
@@ -657,9 +752,10 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 event_id=existing_event.id,
                 conversation_id=existing_event.conversation_id,
                 message_id=message.id,
-                reply=message.content,
+                reply="" if automation_state != "auto" else message.content,
                 ticket_id=metadata.get("ticket_id"),
                 pending_action=pending_action,
+                automation_state=automation_state,
             )
 
         lock_key = f"channel:{connector.id}:{payload.external_conversation_id}"
@@ -667,7 +763,7 @@ def create_platform_router(settings: Settings) -> APIRouter:
             if not acquired:
                 raise HTTPException(status_code=409, detail="Channel conversation is busy")
             customer_link = await repo.require_external_customer(
-                connector.tenant_id, payload.external_customer_id
+                connector.tenant_id, payload.external_customer_id, connector.id
             )
             mapping = await repo.get_channel_conversation(
                 connector.tenant_id, connector.id, payload.external_conversation_id
@@ -680,11 +776,41 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 payload_hash=hashlib.sha256(body).hexdigest(),
                 signature_valid=True,
             )
+            if mapping:
+                conversation = await repo.get_scoped_conversation_by_id(
+                    connector.tenant_id, mapping.conversation_id
+                )
+                if conversation.automation_state != "auto":
+                    inspection = inspect_message(payload.message)
+                    incoming = await SupportRepository(session).add_message(
+                        conversation.id,
+                        "user",
+                        inspection.sanitized_text,
+                        metadata={
+                            "channel": connector.provider,
+                            "automation_state": conversation.automation_state,
+                            "locale": payload.locale,
+                            "safety_reasons": list(inspection.reasons),
+                        },
+                    )
+                    await repo.complete_webhook(
+                        event, conversation_id=conversation.id, message_id=incoming.id
+                    )
+                    await session.commit()
+                    return ChannelMessageResponse(
+                        event_id=event.id,
+                        conversation_id=conversation.id,
+                        message_id=incoming.id,
+                        reply="",
+                        automation_state=conversation.automation_state,
+                    )
             response = await request.app.state.support_service.chat(
                 session,
                 ChatRequest(
                     message=payload.message,
                     conversation_id=mapping.conversation_id if mapping else None,
+                    locale=payload.locale,
+                    external_product_id=payload.external_product_id,
                 ),
                 f"channel:{connector.id}:{x_event_id}",
                 tenant_id=connector.tenant_id,
@@ -697,6 +823,14 @@ def create_platform_router(settings: Settings) -> APIRouter:
                 payload.external_conversation_id,
                 response.conversation_id,
             )
+            await request.app.state.channel_delivery.enqueue_for_conversation(
+                session,
+                tenant_id=connector.tenant_id,
+                conversation_id=response.conversation_id,
+                content=response.reply,
+                idempotency_key=f"agent-reply:{response.message_id}",
+                source_message_id=response.message_id,
+            )
             await repo.complete_webhook(
                 event, conversation_id=response.conversation_id, message_id=response.message_id
             )
@@ -708,6 +842,7 @@ def create_platform_router(settings: Settings) -> APIRouter:
             reply=response.reply,
             ticket_id=response.ticket_id,
             pending_action=response.pending_action,
+            automation_state="human" if response.ticket_id else "auto",
         )
 
     return router

@@ -28,6 +28,10 @@ class ShopifyCommerceProvider:
             follow_redirects=False,
         )
 
+    @property
+    def supported_actions(self) -> frozenset[str]:
+        return frozenset({"get_order", "create_return"})
+
     async def healthcheck(self) -> bool:
         try:
             result = await self._graphql("query SupportPilotHealth { shop { id } }")

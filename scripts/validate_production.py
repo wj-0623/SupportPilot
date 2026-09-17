@@ -30,10 +30,32 @@ def main() -> int:
     if not lock.exists() or "fastapi==" not in lock.read_text(encoding="utf-8"):
         raise RuntimeError("Production dependency lock is missing or invalid")
     compose = (ROOT / "compose.production.yaml").read_text(encoding="utf-8")
-    required = ["SUPPORTPILOT_IMAGE", "POSTGRES_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE"]
+    required = [
+        "SUPPORTPILOT_IMAGE",
+        "POSTGRES_IMAGE",
+        "REDIS_IMAGE",
+        "CADDY_IMAGE",
+        "TEMPO_IMAGE",
+        "ALERTMANAGER_IMAGE",
+    ]
     missing = [item for item in required if item not in compose]
     if missing:
         raise RuntimeError(f"Production compose omits immutable image settings: {missing}")
+    required_services = ["tempo:", "alertmanager:", "otel-collector:", "prometheus:"]
+    missing_services = [item.removesuffix(":") for item in required_services if item not in compose]
+    if missing_services:
+        raise RuntimeError(f"Production compose omits observability services: {missing_services}")
+    required_ops_files = [
+        ROOT / "ops" / "tempo.yaml",
+        ROOT / "ops" / "alertmanager.yaml",
+        ROOT / "ops" / "otel-collector.yaml",
+        ROOT / "ops" / "alerts.yaml",
+    ]
+    missing_files = [
+        str(path.relative_to(ROOT)) for path in required_ops_files if not path.exists()
+    ]
+    if missing_files:
+        raise RuntimeError(f"Production operations files are missing: {missing_files}")
     print(
         json.dumps(
             {

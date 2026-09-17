@@ -1,0 +1,1 @@
+"""Durable external channel delivery."""

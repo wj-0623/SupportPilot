@@ -112,6 +112,11 @@ class SupportRepository:
         await self.session.execute(
             select(Conversation.id).where(Conversation.id == conversation_id).with_for_update()
         )
+        conversation = await self.session.get(Conversation, conversation_id)
+        if conversation is None or conversation.customer_id != customer_id:
+            raise NotFoundError("Conversation not found")
+        conversation.automation_state = "human"
+        conversation.automation_updated_at = datetime.now(UTC)
         existing = await self.session.scalar(
             select(Ticket).where(
                 Ticket.conversation_id == conversation_id,
@@ -133,6 +138,15 @@ class SupportRepository:
         self.session.add(ticket)
         await self.session.flush()
         return ticket
+
+    async def set_automation_state(self, conversation_id: str, state: str) -> Conversation:
+        conversation = await self.session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise NotFoundError("Conversation not found")
+        conversation.automation_state = state
+        conversation.automation_updated_at = datetime.now(UTC)
+        await self.session.flush()
+        return conversation
 
     async def get_conversation(self, conversation_id: str) -> Conversation:
         conversation = await self.session.get(Conversation, conversation_id)

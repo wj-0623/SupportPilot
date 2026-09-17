@@ -18,6 +18,9 @@ class ConnectorResult:
 
 
 class CommerceProvider(Protocol):
+    @property
+    def supported_actions(self) -> frozenset[str]: ...
+
     async def execute(
         self,
         action: str,

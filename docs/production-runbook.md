@@ -12,19 +12,19 @@
 
 ## 部署
 
-1. 从 `.env.production.example` 创建 `.env.production`，把所有空值和 `REPLACE` 填完。
+1. 从 `.env.production.example` 创建 `.env.production`，把所有空值和 `REPLACE` 填完；创建 `ALERT_WEBHOOK_URL_FILE` 指向的单行 secret 文件。
 2. 用 `pip-audit -r requirements.lock`、Bandit、测试和 42 项评测门禁验证 release。
 3. 构建镜像并生成 SBOM；把镜像推到受控 registry 后，将 `SUPPORTPILOT_IMAGE` 固定为 digest。
 4. 先执行 `alembic upgrade head`。应用在 schema revision 不匹配时拒绝启动。
 5. 用 `python scripts/provision_tenant.py --tenant-id ... --slug ... --name ... --created-by <OIDC-sub>` 创建租户 Draft；脚本同时创建首位管理员成员。只有策略已审核时才加 `--publish`。
 6. 执行 `docker compose -f compose.production.yaml up -d`。
-7. 检查 `/health/live`、`/health/ready`、Prometheus target、Grafana dashboard 和 OTel traces。
+7. 检查 `/health/live`、`/health/ready`、Prometheus target、Grafana dashboard、Tempo traces 和 Alertmanager 通知。
 8. 创建连接器 Draft，健康检查通过后激活；再发布 Domain Pack 和 canary release。
-9. 检查 `/api/v1/ops/knowledge-health`、`/api/v1/ops/handoffs` 和 `/api/v1/ops/audit-events`；生产 OpenAPI 与公网 `/metrics` 默认不可访问。
+9. 检查 `/api/v1/ops/knowledge-health`、`/api/v1/ops/handoffs`、`/api/v1/ops/outbound-messages` 和 `/api/v1/ops/audit-events`；生产 OpenAPI 与公网 `/metrics` 默认不可访问。
 
 ## SLO 与告警
 
-建议初始 SLO：API 可用性 99.9%，5xx 小于 2%，P95 小于 2 秒，写动作成功率至少 98%，跨租户失败必须为 0。`ops/alerts.yaml` 提供 5xx、P95 和动作失败告警。真实解决率、FCR 和知识有据率通过 `/api/v1/ops/quality` 查看。
+建议初始 SLO：API 可用性 99.9%，5xx 小于 2%，P95 小于 2 秒，写动作成功率至少 98%，跨租户失败必须为 0。`ops/alerts.yaml` 提供 5xx、P95、动作失败和外发死信告警。真实解决率、FCR 和知识有据率通过 `/api/v1/ops/quality` 查看。
 
 ## 备份与恢复
 
@@ -37,6 +37,7 @@
 
 - 模型故障：固定工作流继续服务，模糊问题降级或转人工；
 - 连接器瞬态故障：动作进入 retryable，保留同一幂等键并按指数退避；达到 `ACTION_MAX_ATTEMPTS` 后失败并告警；
+- 渠道投递故障：检查 `dead_letter` 的错误码和连接器健康；修复后从运营控制台重试，不能生成新的幂等键绕过已有记录；
 - 动作状态不一致：以商店系统为事实源，核对 `ActionExecution`、outbox 和外部 id，不直接重放新键；
 - 质量回退：停止提升 canary，把新 release 标为 superseded，重新激活上一个已通过版本；
 - 安全事件：禁用连接器、轮换密钥、保存审计证据，按 `SECURITY.md` 流程处理。

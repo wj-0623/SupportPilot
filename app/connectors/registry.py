@@ -68,3 +68,22 @@ class ProviderRegistry:
                 timeout_seconds=timeout_seconds,
             )
         raise ValueError(f"unsupported connector provider: {connector.provider}")
+
+    def supported_capabilities(self, connector: ConnectorDefinition) -> frozenset[str]:
+        """Return capabilities implemented by the configured adapter."""
+
+        config: dict[str, Any] = json.loads(connector.config_json)
+        if connector.provider == "mock":
+            actions = set(self.mock.supported_actions)
+        elif connector.provider == "generic-rest":
+            actions = set(config.get("actions", {}))
+        elif connector.provider == "shopify":
+            actions = {"get_order", "create_return"}
+        elif connector.provider == "chatwoot":
+            actions = {"handoff", "send_message"}
+        else:
+            actions = set()
+        capabilities = actions | {"inbound_chat"}
+        if "send_message" in actions:
+            capabilities.add("outbound_chat")
+        return frozenset(capabilities)

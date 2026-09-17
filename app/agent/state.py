@@ -22,6 +22,12 @@ class SupportState(TypedDict, total=False):
     intent: str
     intents: list[str]
     confidence: float
+    route: str
+    routing_reason: str
+    domain_pack_revision_id: str
+    domain_pack_version: int
+    locale: str
+    external_product_id: str | None
     order_id: str | None
     order_id_inferred: bool
     response: str

@@ -14,6 +14,8 @@ class ChatRequest(BaseModel):
     )
     message: str = Field(min_length=1, max_length=4_000, examples=["查询订单 ORD-1002"])
     conversation_id: str | None = Field(default=None, max_length=36)
+    locale: str | None = Field(default=None, max_length=20)
+    external_product_id: str | None = Field(default=None, max_length=160)
 
 
 class Citation(BaseModel):
@@ -53,6 +55,7 @@ class ConversationResponse(BaseModel):
     id: str
     customer_id: str
     status: str
+    automation_state: Literal["auto", "human", "snoozed", "closed"]
     messages: list[MessageResponse]
     created_at: datetime
     updated_at: datetime
@@ -91,6 +94,7 @@ class ChannelMessageRequest(BaseModel):
     external_conversation_id: str = Field(min_length=1, max_length=200)
     message: str = Field(min_length=1, max_length=4_000)
     locale: str | None = Field(default=None, max_length=20)
+    external_product_id: str | None = Field(default=None, max_length=160)
 
 
 class ChannelMessageResponse(BaseModel):
@@ -100,6 +104,51 @@ class ChannelMessageResponse(BaseModel):
     reply: str
     ticket_id: str | None = None
     pending_action: PendingAction | None = None
+    automation_state: Literal["auto", "human", "snoozed", "closed"] = "auto"
+
+
+class ConversationAutomationRequest(BaseModel):
+    state: Literal["auto", "human", "snoozed", "closed"]
+
+
+class TicketReplyRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4_000)
+
+
+class CustomerMappingRequest(BaseModel):
+    connector_id: str = Field(min_length=1, max_length=64)
+    external_id: str = Field(min_length=1, max_length=160)
+    customer_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    email: str = Field(
+        min_length=3,
+        max_length=320,
+        pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$",
+    )
+
+
+class CustomerMappingResponse(BaseModel):
+    id: str
+    connector_id: str
+    external_id: str
+    customer_id: str
+    created_at: datetime
+
+
+class TenantMemberRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    role: Literal["customer", "agent", "admin"]
+    customer_id: str | None = Field(default=None, max_length=64)
+    active: bool = True
+
+
+class TenantMemberResponse(BaseModel):
+    id: str
+    subject: str
+    role: str
+    customer_id: str | None
+    active: bool
+    created_at: datetime
 
 
 class AuditEventResponse(BaseModel):
@@ -112,6 +161,21 @@ class AuditEventResponse(BaseModel):
     request_id: str | None
     resource_id: str | None
     created_at: datetime
+
+
+class OutboundMessageResponse(BaseModel):
+    id: str
+    connector_id: str
+    conversation_id: str
+    source_action_id: str | None
+    source_message_id: str | None
+    status: str
+    attempts: int
+    available_at: datetime
+    external_id: str | None
+    error_code: str | None
+    created_at: datetime
+    delivered_at: datetime | None
 
 
 class HealthResponse(BaseModel):

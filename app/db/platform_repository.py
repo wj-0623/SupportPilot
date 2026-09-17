@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,17 +19,21 @@ from app.db.models import (
     ConnectorDefinition,
     Conversation,
     ConversationScope,
+    Customer,
+    CustomerChannelIdentity,
     DomainPackRevision,
     EvaluationCandidate,
     EvaluationDatasetRevision,
     Feedback,
     KnowledgeSource,
     Message,
+    OutboundMessage,
     OutboxEvent,
     ResolutionOutcome,
     RunReview,
     Tenant,
     TenantCustomer,
+    TenantMember,
     Ticket,
     WebhookEvent,
     WorkflowCheckpoint,
@@ -61,9 +65,19 @@ class PlatformRepository:
         return link
 
     async def require_external_customer(
-        self, tenant_id: str, external_customer_id: str
+        self, tenant_id: str, external_customer_id: str, connector_id: str | None = None
     ) -> TenantCustomer:
         await self.get_tenant(tenant_id)
+        if connector_id:
+            identity = await self.session.scalar(
+                select(CustomerChannelIdentity).where(
+                    CustomerChannelIdentity.tenant_id == tenant_id,
+                    CustomerChannelIdentity.connector_id == connector_id,
+                    CustomerChannelIdentity.external_id == external_customer_id,
+                )
+            )
+            if identity:
+                return await self.require_customer(tenant_id, identity.customer_id)
         link = await self.session.scalar(
             select(TenantCustomer).where(
                 TenantCustomer.tenant_id == tenant_id,
@@ -73,6 +87,121 @@ class PlatformRepository:
         if link is None:
             raise NotFoundError("External customer mapping not found")
         return link
+
+    async def list_customer_mappings(self, tenant_id: str) -> list[CustomerChannelIdentity]:
+        await self.get_tenant(tenant_id)
+        return list(
+            await self.session.scalars(
+                select(CustomerChannelIdentity)
+                .where(CustomerChannelIdentity.tenant_id == tenant_id)
+                .order_by(CustomerChannelIdentity.created_at.desc())
+            )
+        )
+
+    async def upsert_customer_mapping(
+        self,
+        *,
+        tenant_id: str,
+        connector_id: str,
+        external_id: str,
+        customer_id: str,
+        name: str,
+        email: str,
+    ) -> CustomerChannelIdentity:
+        await self.get_tenant(tenant_id)
+        await self.get_connector(tenant_id, connector_id)
+        customer = await self.session.get(Customer, customer_id)
+        if customer is None:
+            email_owner = await self.session.scalar(select(Customer).where(Customer.email == email))
+            if email_owner is not None:
+                raise ConflictError("Customer email is already associated with another id")
+            customer = Customer(id=customer_id, name=name, email=email)
+            self.session.add(customer)
+            await self.session.flush()
+        elif customer.email != email:
+            raise ConflictError("Customer id is already associated with another email")
+        customer_link = await self.session.scalar(
+            select(TenantCustomer).where(
+                TenantCustomer.tenant_id == tenant_id,
+                TenantCustomer.customer_id == customer_id,
+            )
+        )
+        if customer_link is None:
+            self.session.add(TenantCustomer(tenant_id=tenant_id, customer_id=customer_id))
+            await self.session.flush()
+        identity: CustomerChannelIdentity | None = await self.session.scalar(
+            select(CustomerChannelIdentity).where(
+                CustomerChannelIdentity.tenant_id == tenant_id,
+                CustomerChannelIdentity.connector_id == connector_id,
+                CustomerChannelIdentity.external_id == external_id,
+            )
+        )
+        if identity:
+            if identity.customer_id != customer_id:
+                raise ConflictError("External customer id is already mapped")
+            return identity
+        identity = await self.session.scalar(
+            select(CustomerChannelIdentity).where(
+                CustomerChannelIdentity.tenant_id == tenant_id,
+                CustomerChannelIdentity.connector_id == connector_id,
+                CustomerChannelIdentity.customer_id == customer_id,
+            )
+        )
+        if identity:
+            identity.external_id = external_id
+            await self.session.flush()
+            return identity
+        identity = CustomerChannelIdentity(
+            tenant_id=tenant_id,
+            connector_id=connector_id,
+            customer_id=customer_id,
+            external_id=external_id,
+        )
+        self.session.add(identity)
+        await self.session.flush()
+        return identity
+
+    async def list_members(self, tenant_id: str) -> list[TenantMember]:
+        await self.get_tenant(tenant_id)
+        return list(
+            await self.session.scalars(
+                select(TenantMember)
+                .where(TenantMember.tenant_id == tenant_id)
+                .order_by(TenantMember.created_at)
+            )
+        )
+
+    async def upsert_member(
+        self,
+        *,
+        tenant_id: str,
+        subject: str,
+        role: str,
+        customer_id: str | None,
+        active: bool,
+    ) -> TenantMember:
+        await self.get_tenant(tenant_id)
+        member = await self.session.scalar(
+            select(TenantMember).where(
+                TenantMember.tenant_id == tenant_id,
+                TenantMember.subject == subject,
+            )
+        )
+        if member is None:
+            member = TenantMember(
+                tenant_id=tenant_id,
+                subject=subject,
+                role=role,
+                customer_id=customer_id,
+                active=active,
+            )
+            self.session.add(member)
+        else:
+            member.role = role
+            member.customer_id = customer_id
+            member.active = active
+        await self.session.flush()
+        return member
 
     async def bind_conversation(self, tenant_id: str, conversation_id: str) -> None:
         existing = await self.session.get(ConversationScope, conversation_id)
@@ -197,6 +326,16 @@ class PlatformRepository:
             statement = statement.where(Ticket.status == status)
         return list(await self.session.scalars(statement))
 
+    async def get_scoped_ticket(self, tenant_id: str, ticket_id: str) -> Ticket:
+        ticket = await self.session.scalar(
+            select(Ticket)
+            .join(ConversationScope, ConversationScope.conversation_id == Ticket.conversation_id)
+            .where(Ticket.id == ticket_id, ConversationScope.tenant_id == tenant_id)
+        )
+        if ticket is None:
+            raise NotFoundError("Ticket not found")
+        return ticket
+
     async def resolve_scoped_ticket(
         self, tenant_id: str, ticket_id: str, resolution: str
     ) -> Ticket:
@@ -284,6 +423,166 @@ class PlatformRepository:
         self.session.add(mapping)
         await self.session.flush()
         return mapping
+
+    async def get_channel_mapping_for_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> ChannelConversation | None:
+        mapping: ChannelConversation | None = await self.session.scalar(
+            select(ChannelConversation).where(
+                ChannelConversation.tenant_id == tenant_id,
+                ChannelConversation.conversation_id == conversation_id,
+            )
+        )
+        return mapping
+
+    async def set_conversation_automation(
+        self, tenant_id: str, conversation_id: str, state: str
+    ) -> Conversation:
+        conversation = await self.get_scoped_conversation_by_id(tenant_id, conversation_id)
+        conversation.automation_state = state
+        conversation.automation_updated_at = datetime.now(UTC)
+        if state == "closed":
+            conversation.status = "closed"
+        elif state == "auto" and conversation.status == "closed":
+            conversation.status = "active"
+        await self.session.flush()
+        return conversation
+
+    async def enqueue_outbound_message(
+        self,
+        *,
+        tenant_id: str,
+        connector_id: str,
+        conversation_id: str,
+        external_conversation_id: str,
+        content: str,
+        idempotency_key: str,
+        source_action_id: str | None = None,
+        source_message_id: str | None = None,
+    ) -> OutboundMessage:
+        existing = await self.session.scalar(
+            select(OutboundMessage).where(
+                OutboundMessage.tenant_id == tenant_id,
+                OutboundMessage.connector_id == connector_id,
+                OutboundMessage.idempotency_key == idempotency_key,
+            )
+        )
+        if existing:
+            return existing
+        message = OutboundMessage(
+            tenant_id=tenant_id,
+            connector_id=connector_id,
+            conversation_id=conversation_id,
+            external_conversation_id=external_conversation_id,
+            source_action_id=source_action_id,
+            source_message_id=source_message_id,
+            content=content,
+            idempotency_key=idempotency_key,
+        )
+        self.session.add(message)
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            raise ConflictError("Outbound idempotency key already exists") from exc
+        return message
+
+    async def get_outbound_by_key(
+        self, tenant_id: str, connector_id: str, idempotency_key: str
+    ) -> OutboundMessage | None:
+        message: OutboundMessage | None = await self.session.scalar(
+            select(OutboundMessage).where(
+                OutboundMessage.tenant_id == tenant_id,
+                OutboundMessage.connector_id == connector_id,
+                OutboundMessage.idempotency_key == idempotency_key,
+            )
+        )
+        return message
+
+    async def claim_outbound_messages(
+        self, *, limit: int = 20, lease_seconds: int = 120
+    ) -> list[OutboundMessage]:
+        now = datetime.now(UTC)
+        stale_before = now - timedelta(seconds=lease_seconds)
+        messages = list(
+            await self.session.scalars(
+                select(OutboundMessage)
+                .where(
+                    or_(
+                        (
+                            OutboundMessage.status.in_(["pending", "retryable"])
+                            & (OutboundMessage.available_at <= now)
+                        ),
+                        (
+                            (OutboundMessage.status == "sending")
+                            & (OutboundMessage.updated_at <= stale_before)
+                        ),
+                    )
+                )
+                .order_by(OutboundMessage.created_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        for message in messages:
+            message.status = "sending"
+            message.attempts += 1
+        await self.session.flush()
+        return messages
+
+    async def mark_outbound_delivered(
+        self, message: OutboundMessage, external_id: str | None
+    ) -> None:
+        message.status = "delivered"
+        message.external_id = external_id
+        message.error_code = None
+        message.delivered_at = datetime.now(UTC)
+
+    async def mark_outbound_failed(
+        self,
+        message: OutboundMessage,
+        error_code: str,
+        *,
+        max_attempts: int,
+        retryable: bool,
+    ) -> None:
+        message.error_code = error_code[:160]
+        if not retryable or message.attempts >= max_attempts:
+            message.status = "dead_letter"
+            return
+        message.status = "retryable"
+        message.attempts = 0
+        delay_seconds = min(900, 2 ** min(message.attempts, 9))
+        message.available_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+
+    async def list_outbound_messages(
+        self, tenant_id: str, *, limit: int = 100
+    ) -> list[OutboundMessage]:
+        return list(
+            await self.session.scalars(
+                select(OutboundMessage)
+                .where(OutboundMessage.tenant_id == tenant_id)
+                .order_by(OutboundMessage.created_at.desc())
+                .limit(limit)
+            )
+        )
+
+    async def retry_outbound_message(self, tenant_id: str, message_id: str) -> OutboundMessage:
+        message = await self.session.scalar(
+            select(OutboundMessage)
+            .where(
+                OutboundMessage.id == message_id,
+                OutboundMessage.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        if message is None:
+            raise NotFoundError("Outbound message not found")
+        if message.status != "dead_letter":
+            raise ConflictError("Only dead-letter messages can be retried")
+        message.status = "retryable"
+        message.available_at = datetime.now(UTC)
+        message.error_code = None
+        return message
 
     async def create_domain_pack_draft(
         self, tenant_id: str, pack: DomainPackConfig, created_by: str

@@ -1,4 +1,4 @@
-const adminState = { templates: [], token: sessionStorage.getItem("supportpilot.adminToken") || "", key: "" };
+const adminState = { templates: [], token: "", key: "" };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
@@ -40,17 +40,30 @@ async function loadPacks() {
 
 async function loadConnectors() {
   const connectors = await api("/api/v1/admin/connectors");
-  $("#connectors").innerHTML = connectors.map((item) => record(item.name, `${item.provider} · ${item.status} · ${item.capabilities.join(", ")}`)).join("") || "暂无连接器";
+  $("#connectors").innerHTML = connectors.map((item) => record(item.name, `${item.id} · ${item.provider} · ${item.status} · ${item.capabilities.join(", ")}`)).join("") || "暂无连接器";
 }
 
 async function loadTickets() {
   const tickets = await api("/api/v1/tickets?status=open");
-  $("#tickets").innerHTML = tickets.map((item) => record(item.id, `${item.priority} · ${item.reason}`)).join("") || "当前没有待处理工单";
+  $("#tickets").innerHTML = tickets.map((item) => record(
+    item.id,
+    `${item.priority} · ${item.reason}`,
+    `<button data-reply="${item.id}">回复</button><button data-resume="${item.conversation_id}">恢复自动</button><button data-resolve="${item.id}">解决</button>`,
+  )).join("") || "当前没有待处理工单";
+}
+
+async function loadOutbound() {
+  const messages = await api("/api/v1/ops/outbound-messages?limit=30");
+  $("#outbound").innerHTML = messages.map((item) => record(
+    item.id,
+    `${item.status} · 尝试 ${item.attempts} 次${item.error_code ? ` · ${item.error_code}` : ""}`,
+    item.status === "dead_letter" ? `<button data-retry="${item.id}">重试</button>` : "",
+  )).join("") || "当前没有外发消息";
 }
 
 async function refresh() {
   try {
-    await Promise.all([loadQuality(), loadPacks(), loadConnectors(), loadTickets()]);
+    await Promise.all([loadQuality(), loadPacks(), loadConnectors(), loadTickets(), loadOutbound()]);
     $("#status").textContent = "已连接";
   } catch (error) { $("#status").textContent = `连接失败：${error.message}`; }
 }
@@ -59,12 +72,43 @@ $("#bearerToken").value = adminState.token;
 $("#connect").addEventListener("click", () => {
   adminState.token = $("#bearerToken").value.trim();
   adminState.key = $("#adminKey").value.trim();
-  sessionStorage.setItem("supportpilot.adminToken", adminState.token);
   refresh();
 });
 $("#refreshPacks").addEventListener("click", loadPacks);
 $("#refreshConnectors").addEventListener("click", loadConnectors);
 $("#refreshTickets").addEventListener("click", loadTickets);
+$("#refreshOutbound").addEventListener("click", loadOutbound);
+$("#outbound").addEventListener("click", async (event) => {
+  const id = event.target.dataset.retry;
+  if (!id) return;
+  await api(`/api/v1/ops/outbound-messages/${id}/retry`, { method: "POST" });
+  await loadOutbound();
+});
+$("#tickets").addEventListener("click", async (event) => {
+  const replyId = event.target.dataset.reply;
+  const resumeId = event.target.dataset.resume;
+  const resolveId = event.target.dataset.resolve;
+  if (replyId) {
+    const content = window.prompt("输入给顾客的回复");
+    if (!content) return;
+    await api(`/api/v1/tickets/${replyId}/reply`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ content }),
+    });
+  } else if (resumeId) {
+    await api(`/api/v1/conversations/${resumeId}/automation`, {
+      method: "PATCH", body: JSON.stringify({ state: "auto" }),
+    });
+  } else if (resolveId) {
+    const resolution = window.prompt("输入处理结论");
+    if (!resolution) return;
+    await api(`/api/v1/tickets/${resolveId}`, {
+      method: "PATCH", body: JSON.stringify({ status: "resolved", resolution }),
+    });
+  }
+  await Promise.all([loadTickets(), loadOutbound()]);
+});
 $("#createDraft").addEventListener("click", async () => {
   const template = adminState.templates.find((item) => item.slug === $("#templateSelect").value);
   if (!template) return;
@@ -86,4 +130,26 @@ $("#knowledgeForm").addEventListener("submit", async (event) => {
   } catch (error) { $("#knowledgeResult").textContent = error.message; }
 });
 
-if (adminState.token) refresh();
+$("#mappingForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    const mapping = await api("/api/v1/admin/customer-mappings", {
+      method: "POST", body: JSON.stringify(data),
+    });
+    $("#mappingResult").textContent = `已映射到 ${mapping.customer_id}`;
+    event.target.reset();
+  } catch (error) { $("#mappingResult").textContent = error.message; }
+});
+
+$("#memberForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    const member = await api("/api/v1/admin/members", {
+      method: "POST", body: JSON.stringify({ ...data, active: true }),
+    });
+    $("#memberResult").textContent = `已保存 ${member.subject}`;
+    event.target.reset();
+  } catch (error) { $("#memberResult").textContent = error.message; }
+});

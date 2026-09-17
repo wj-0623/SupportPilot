@@ -1,8 +1,8 @@
 {
   "versions": {
-    "prompt": "support-agent-v3",
-    "router": "domain-pack-router-v3",
-    "policy": "domain-pack-policy-v3"
+    "prompt": "support-agent-v4",
+    "router": "domain-pack-router-v4",
+    "policy": "domain-pack-policy-v4"
   },
   "metrics": {
     "pass_rate": 1.0,

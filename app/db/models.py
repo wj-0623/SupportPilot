@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -59,6 +60,8 @@ class Conversation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    automation_state: Mapped[str] = mapped_column(String(24), default="auto", index=True)
+    automation_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -192,7 +195,7 @@ class TenantCustomer(Base):
     __tablename__ = "tenant_customers"
     __table_args__ = (
         UniqueConstraint("tenant_id", "customer_id"),
-        UniqueConstraint("tenant_id", "external_id"),
+        Index("uq_tenant_customers_external", "tenant_id", "external_id", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -200,6 +203,24 @@ class TenantCustomer(Base):
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
     external_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CustomerChannelIdentity(Base):
+    __tablename__ = "customer_channel_identities"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "connector_id", "external_id"),
+        UniqueConstraint("tenant_id", "connector_id", "customer_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    connector_id: Mapped[str] = mapped_column(ForeignKey("connector_definitions.id"), index=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
+    external_id: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class TenantMember(Base):
@@ -362,6 +383,39 @@ class ChannelConversation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class OutboundMessage(Base):
+    """A durable customer-facing message awaiting channel delivery."""
+
+    __tablename__ = "outbound_messages"
+    __table_args__ = (UniqueConstraint("tenant_id", "connector_id", "idempotency_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    connector_id: Mapped[str] = mapped_column(ForeignKey("connector_definitions.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    external_conversation_id: Mapped[str] = mapped_column(String(200))
+    source_action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("action_executions.id"), nullable=True, index=True
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("messages.id"), nullable=True, index=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditEvent(Base):

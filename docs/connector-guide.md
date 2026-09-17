@@ -5,7 +5,7 @@
 - `mock`：本地演示、CI 与沙箱模拟；
 - `generic-rest`：通过动作到 HTTP method/path 映射接任意电商中台；
 - `shopify`：Shopify GraphQL Admin API 2026-07 订单查询与 returnCreate 参考实现；
-- `chatwoot`：创建人工交接会话的参考实现。
+- `chatwoot`：创建人工交接会话和发送会话消息的参考实现。
 
 ## 配置原则
 
@@ -49,6 +49,10 @@ Webhook 使用 `X-Event-ID` 防重，使用 `X-Webhook-Timestamp` 防重放，�
 }
 ```
 
-请求使用相同的 webhook 签名头。外部顾客必须预先映射到当前租户；同一连接器的外部会话固定绑定一个内部会话。同一个 `X-Event-ID` 可安全重试并返回第一次处理结果。
+请求使用相同的 webhook 签名头。外部顾客必须先通过 `/api/v1/admin/customer-mappings` 按连接器映射到当前租户；同一顾客可在不同连接器使用不同平台 ID。同一连接器的外部会话固定绑定一个内部会话。同一个 `X-Event-ID` 可安全重试并返回第一次处理结果。
+
+需要异步回传回复时，适配器必须实现 `send_message`，连接器同时声明 `send_message` 和 `outbound_chat`。系统会先保存 `OutboundMessage`，再由 Worker 使用租户级幂等键投递。瞬态错误指数退避；不可重试错误或达到最大次数后进入 `dead_letter`。运营人员可在 `/api/v1/ops/outbound-messages` 查看并在修复配置后调用 `/{id}/retry`。
+
+创建人工工单会把会话设为 `human`。此时新渠道消息只保存给客服，不会进入 Agent。客服通过 `/api/v1/tickets/{id}/reply` 回传消息，处理完成后通过 `/api/v1/conversations/{id}/automation` 显式恢复 `auto`。
 
 Shopify access token 通过 `X-Shopify-Access-Token` 发送，并应按最小 access scope 获取。公共应用应使用可过期的 offline token；细节见 [Shopify access token 官方文档](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens)。

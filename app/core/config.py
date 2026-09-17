@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     connector_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60)
     connector_max_retries: int = Field(default=2, ge=0, le=5)
     action_max_attempts: int = Field(default=3, ge=1, le=10)
+    action_lease_seconds: int = Field(default=300, ge=30, le=3_600)
+    outbound_max_attempts: int = Field(default=5, ge=1, le=20)
+    outbound_lease_seconds: int = Field(default=120, ge=30, le=3_600)
+    knowledge_chunk_chars: int = Field(default=1_200, ge=200, le=8_000)
+    knowledge_chunk_overlap: int = Field(default=120, ge=0, le=1_000)
     webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
 
     @field_validator("cors_origins", mode="before")

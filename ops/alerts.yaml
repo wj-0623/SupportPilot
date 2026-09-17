@@ -16,3 +16,8 @@ groups:
         for: 15m
         labels: {severity: ticket}
         annotations: {summary: "SupportPilot p95 latency exceeds two seconds"}
+      - alert: SupportPilotOutboundDeadLetters
+        expr: sum(increase(supportpilot_outbound_deliveries_total{status="dead_letter"}[10m])) > 0
+        for: 1m
+        labels: {severity: page}
+        annotations: {summary: "Customer-facing messages entered the dead-letter queue"}

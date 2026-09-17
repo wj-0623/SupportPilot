@@ -1,6 +1,6 @@
-# SupportPilot V3 电商客服平台
+# SupportPilot V4 电商客服平台
 
-SupportPilot V3 是面向真实商家接入的多租户电商客服系统。它用 **LangGraph 工作流 + 受限 Agent** 处理咨询，用版本化 **Domain Pack** 配置行业、品牌、政策、工具和知识，并把线上执行、可观测数据、人工复核、回归评测和灰度发布组成闭环。
+SupportPilot V4 是面向真实商家接入的多租户电商客服系统。它用 **LangGraph 工作流 + 受限 Agent** 处理咨询，用版本化 **Domain Pack** 配置行业、品牌、政策、工具和知识，并把线上执行、可观测数据、人工复核、回归评测和灰度发布组成闭环。
 
 > 本地演示无需外部服务：顾客 `demo-001`，订单 `ORD-1001`、`ORD-1002`、`ORD-1003`。生产上线必须配置商家政策、OIDC/JWT、模型和电商平台凭据。
 
@@ -11,9 +11,9 @@ SupportPilot V3 是面向真实商家接入的多租户电商客服系统。它�
 - **安全动作**：取消、改址、退换等动作必须经过权限检查、客户确认或人工审批、执行前状态重查、幂等调用和 outbox 审计。
 - **真实隔离**：JWT 的 tenant/customer/role claim 驱动查询；conversation、run、feedback、ticket、knowledge、connector、action 和 release 全部按租户过滤。
 - **知识治理**：租户知识 Draft/Live、版本、checksum、提示注入扫描、引用、外部知识新鲜度门禁和无依据降级；生产不会加载演示知识。
-- **全渠道与人工协同**：签名渠道消息入口支持外部客户/会话映射和事件幂等；工单具备负责人、状态流转、优先级、SLA 和 Chatwoot 异步交接。
+- **全渠道与人工协同**：签名渠道入口支持外部客户/会话映射和事件幂等；机器人回复、人工回复和动作结果通过持久化外发队列回传；人工接管期间停止自动回复。
 - **执行—观测—优化**：OTel span、Prometheus、Grafana、脱敏 AgentRun、租户审计、SLA、知识健康、真实解决率/FCR 和动作成功率；负反馈经人工接受后才进入版本化评测集。
-- **发布安全**：隔离 simulation、42 项离线黄金集、V3 集成测试、quality gate、release/canary、人工激活。
+- **发布安全**：隔离 simulation、42 项离线黄金集、V4 集成测试、quality gate、release/canary、人工激活。
 - **生产交付**：Alembic、PostgreSQL、Redis 跨进程锁与限流、后台 Worker、Caddy TLS、健康检查、依赖锁、SBOM/安全扫描配置。
 
 ## 架构
@@ -29,7 +29,7 @@ flowchart LR
   A --> K
   W --> P[Server policy]
   P --> C[Confirm / approve]
-  C --> O[Outbox + worker]
+  C --> O[Action + outbound queues]
   O --> X[Commerce / helpdesk connector]
   X --> T[OTel + Prometheus + audit]
   T --> E[Human-reviewed eval dataset]
@@ -37,7 +37,7 @@ flowchart LR
   S --> R
 ```
 
-详细边界见 [V3 架构](docs/V3-architecture.md) 和 [威胁模型](docs/threat-model.md)。
+V4 上线边界见 [V4 Final 交付说明](docs/V4-final.md)，基础设计见 [V3 架构](docs/V3-architecture.md) 和 [威胁模型](docs/threat-model.md)。
 
 ## Windows + VS Code 快速开始
 
@@ -96,7 +96,9 @@ python -m venv .venv
 
 已实现 `mock`、`generic-rest`、Shopify GraphQL Admin 2026-07 和 Chatwoot 参考适配器。数据库只保存 `env://SECRET_NAME`，真实值由服务端 resolver 读取。
 
-第三方聊天、邮件或社媒渠道可调用签名入口 `POST /api/v1/channels/{connector_id}/messages`。系统用外部顾客 ID 和外部会话 ID 绑定内部租户资源，`X-Event-ID` 重试会返回同一结果，不会重复生成消息或动作。
+第三方聊天、邮件或社媒渠道可调用签名入口 `POST /api/v1/channels/{connector_id}/messages`。系统用外部顾客 ID 和外部会话 ID 绑定内部租户资源，`X-Event-ID` 重试会返回同一结果。启用 `outbound_chat` 后，回复进入持久化队列，由 Worker 幂等投递并在失败时退避重试或进入死信。
+
+生产接入前先通过 `/api/v1/admin/customer-mappings` 建立平台顾客映射，通过 `/api/v1/admin/members` 配置员工角色。人工工单创建后会话进入 `human` 模式；人员使用 `/tickets/{id}/reply` 回复，通过 `/conversations/{id}/automation` 显式恢复自动模式。
 
 写动作 API：
 
@@ -133,7 +135,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip_audit -r requirements.lock
 ```
 
-离线门禁包含 42 个中文/英文、政策、隐私、提示注入、多轮、多意图、挫败情绪和欺诈升级场景；V3 集成测试覆盖 JWT 身份、租户成员、资源归属、签名渠道幂等、Domain Pack 发布、知识注入与过期阻断、工单 SLA、动作确认/重查/幂等、沙箱隔离和人工评测集闭环。
+离线门禁包含 42 个中文/英文、政策、隐私、提示注入、多轮、多意图、挫败情绪和欺诈升级场景；V4 集成测试覆盖 JWT 身份、租户成员、资源归属、配置驱动路由、签名渠道幂等、人工接管、外发队列、Domain Pack 发布、知识注入与过期阻断、工单 SLA、动作确认/重查/幂等、沙箱隔离和人工评测集闭环。
 CI 同时执行分支覆盖率检查，当前最低门槛为 55%，后续提交不得低于该基线。
 
 ## 生产部署
@@ -147,7 +149,7 @@ Copy-Item .env.production.example .env.production
 docker compose -f compose.production.yaml up -d
 ```
 
-部署包含独立 migrate、API、action worker、PostgreSQL、Redis、Caddy、OTel Collector、Prometheus 和 Grafana。当前 Windows 设备没有 Docker Desktop，因此容器链由 CI 和目标环境验证；Python 运行、迁移 smoke、单元/集成测试和离线评测可在本机完成。
+部署包含独立 migrate、API、Worker、PostgreSQL、Redis、Caddy、OTel Collector、Tempo、Prometheus、Alertmanager 和 Grafana。启动前需创建 `ALERT_WEBHOOK_URL_FILE` 指向的单行 secret 文件。Python 运行、迁移 smoke、单元/集成测试和离线评测可在 Windows 本机完成。
 
 完整步骤、SLO、告警、备份、恢复和故障处置见 [生产运行手册](docs/production-runbook.md)。
 
@@ -158,6 +160,7 @@ app/
 ├── actions/       # 确认、审批、重查、幂等与 outbox
 ├── agent/         # LangGraph workflow + bounded agent
 ├── api/           # 客户、控制面、运营和 webhook API
+├── channels/      # 持久化外发投递与重试
 ├── connectors/    # Mock / Generic REST / Shopify / Chatwoot
 ├── core/          # 配置、JWT、Redis coordination、telemetry
 ├── db/            # 多租户模型、仓储和 seed
@@ -166,7 +169,7 @@ app/
 ├── ops/           # 质量聚合
 ├── optimization/  # 证据化优化建议
 ├── static/        # 客户台与独立运营控制台
-└── worker.py      # 可恢复动作 Worker
+└── worker.py      # 可恢复动作与外发 Worker
 domain_packs/      # 七套领域模板
 migrations/        # Alembic 前向迁移
 ops/               # TLS、OTel、Prometheus、Grafana
@@ -174,7 +177,7 @@ ops/               # TLS、OTel、Prometheus、Grafana
 
 ## 对标与开源说明
 
-本项目代码为独立实现，没有复制参考仓库。V3 对照 Intercom、Gorgias、Salesforce Agentforce、Decagon、Sierra，以及 Chatwoot、Langfuse、Agent Health 等开源/公开资料。逐项映射和来源见 [V3 对标报告](docs/V3-benchmark.md)。
+本项目代码为独立实现，没有复制参考仓库。V4 对照 Intercom、Gorgias、Salesforce Agentforce、Decagon、Sierra，以及 XianyuAutoAgent、ChatGPT-On-CS、Chatwoot、Langfuse、Agent Health 等公开资料。参考项目采用 GPL/AGPL，本项目只吸收会话上下文、人工接管和渠道适配等设计思路。逐项映射见 [V4 Final 交付说明](docs/V4-final.md)。
 
 ## License
 

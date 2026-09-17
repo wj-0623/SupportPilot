@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="SupportPilot V3 运营控制台" />
+    <meta name="description" content="SupportPilot V4 运营控制台" />
     <title>SupportPilot · 运营控制台</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles.css" />
@@ -12,7 +12,7 @@
   <body>
     <main class="admin-shell">
       <header class="admin-header">
-        <div><p class="eyebrow">CONTROL PLANE</p><h1>SupportPilot V3 运营控制台</h1></div>
+        <div><p class="eyebrow">CONTROL PLANE</p><h1>SupportPilot V4 运营控制台</h1></div>
         <a href="/">返回客服台</a>
       </header>
       <section class="auth-card">
@@ -42,6 +42,10 @@
           <div id="tickets" class="record-list"></div>
         </section>
         <section class="admin-panel">
+          <div class="panel-title"><h2>外发队列</h2><button id="refreshOutbound">刷新</button></div>
+          <div id="outbound" class="record-list"></div>
+        </section>
+        <section class="admin-panel">
           <h2>知识源 Draft</h2>
           <form id="knowledgeForm">
             <input name="source_key" required placeholder="唯一来源名" />
@@ -50,6 +54,27 @@
             <button class="dark-button">保存并扫描</button>
           </form>
           <p id="knowledgeResult"></p>
+        </section>
+        <section class="admin-panel">
+          <h2>外部顾客映射</h2>
+          <form id="mappingForm">
+            <input name="connector_id" required placeholder="连接器 ID" />
+            <input name="external_id" required placeholder="平台顾客 ID" />
+            <input name="customer_id" required placeholder="内部顾客 ID" />
+            <input name="name" required placeholder="顾客姓名" />
+            <input name="email" type="email" required placeholder="顾客邮箱" />
+            <button class="dark-button">保存映射</button>
+          </form>
+          <p id="mappingResult"></p>
+        </section>
+        <section class="admin-panel">
+          <h2>租户成员</h2>
+          <form id="memberForm">
+            <input name="subject" required placeholder="OIDC subject" />
+            <select name="role"><option value="agent">客服</option><option value="admin">管理员</option></select>
+            <button class="dark-button">保存成员</button>
+          </form>
+          <p id="memberResult"></p>
         </section>
       </div>
     </main>

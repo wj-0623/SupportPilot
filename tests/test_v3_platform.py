@@ -6,19 +6,29 @@ import hmac
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.actions.service import ActionService
 from app.connectors.base import ConnectorError
+from app.connectors.credentials import EnvironmentCredentialResolver
 from app.connectors.generic_rest import validate_connector_url
+from app.connectors.registry import ProviderRegistry
 from app.connectors.shopify import ShopifyCommerceProvider
 from app.core.config import Settings
 from app.db.database import Database
-from app.db.models import KnowledgeSource
+from app.db.models import KnowledgeSource, OutboundMessage
+from app.db.platform_repository import PlatformRepository
+from app.db.repository import SupportRepository
+from app.db.seed import seed_demo_data
+from app.domain.config import DomainPackConfig
+from app.domain.routing import decide_route
 from app.knowledge import KnowledgeBase, partition_fresh_knowledge
 from app.main import create_app
+from app.worker import process_once
 
 JWT_SECRET = "v3-test-secret-that-is-longer-than-32-bytes"
 
@@ -537,3 +547,259 @@ def test_handoff_has_sla_assignment_transitions_and_audit() -> None:
         audit = client.get("/api/v1/ops/audit-events", headers=admin)
         assert audit.status_code == 200
         assert any(event["path"].endswith(ticket_id) for event in audit.json())
+
+
+def test_domain_pack_controls_route_threshold_and_workflow_order() -> None:
+    pack = DomainPackConfig.model_validate(
+        {
+            "slug": "routing-test",
+            "name": "Routing test",
+            "intents": [
+                {
+                    "name": "faq",
+                    "keywords": ["配送"],
+                    "route": "agent",
+                    "confidence_threshold": 0.7,
+                },
+                {
+                    "name": "human_handoff",
+                    "keywords": ["人工"],
+                    "route": "handoff",
+                    "confidence_threshold": 0.7,
+                },
+                {
+                    "name": "general",
+                    "keywords": [],
+                    "route": "agent",
+                    "confidence_threshold": 0.0,
+                },
+            ],
+            "tools": [],
+            "workflow_order": ["human_handoff", "faq"],
+        }
+    )
+    decision = decide_route("配送问题，请人工处理", pack)
+    assert decision.primary.name == "human_handoff"
+    assert decision.route == "handoff"
+
+
+def test_identity_management_and_manual_channel_takeover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "channel-webhook-secret-for-v4-tests"
+    monkeypatch.setenv("CHANNEL_WEBHOOK_SECRET_V4", secret)
+    with build_v3_client() as client:
+        admin = bearer(token(role="admin"))
+        member = client.post(
+            "/api/v1/admin/members",
+            headers=admin,
+            json={"subject": "support-agent-v4", "role": "agent", "active": True},
+        )
+        assert member.status_code == 201
+
+        connector = client.post(
+            "/api/v1/admin/connectors",
+            headers=admin,
+            json={
+                "name": "v4-channel",
+                "provider": "mock",
+                "capabilities": ["inbound_chat", "outbound_chat", "send_message"],
+                "config": {"webhook_secret_ref": "env://CHANNEL_WEBHOOK_SECRET_V4"},
+            },
+        ).json()
+        assert (
+            client.post(
+                f"/api/v1/admin/connectors/{connector['id']}/activate", headers=admin
+            ).status_code
+            == 200
+        )
+        mapping = client.post(
+            "/api/v1/admin/customer-mappings",
+            headers=admin,
+            json={
+                "connector_id": connector["id"],
+                "external_id": "external-v4-customer",
+                "customer_id": "v4-customer",
+                "name": "V4 Customer",
+                "email": "v4-customer@example.com",
+            },
+        )
+        assert mapping.status_code == 201
+        sandbox_connector = next(
+            item
+            for item in client.get("/api/v1/admin/connectors", headers=admin).json()
+            if item["id"] != connector["id"]
+        )
+        second_mapping = client.post(
+            "/api/v1/admin/customer-mappings",
+            headers=admin,
+            json={
+                "connector_id": sandbox_connector["id"],
+                "external_id": "another-platform-id",
+                "customer_id": "v4-customer",
+                "name": "V4 Customer",
+                "email": "v4-customer@example.com",
+            },
+        )
+        assert second_mapping.status_code == 201
+
+        def send(event_id: str, message: str) -> httpx.Response:
+            payload = {
+                "external_customer_id": "external-v4-customer",
+                "external_conversation_id": "v4-conversation",
+                "message": message,
+                "locale": "zh-CN",
+            }
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+            timestamp = str(int(time.time()))
+            signature = hmac.new(
+                secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+            ).hexdigest()
+            return client.post(
+                f"/api/v1/channels/{connector['id']}/messages",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Webhook-Timestamp": timestamp,
+                    "X-Webhook-Signature": signature,
+                    "X-Event-ID": event_id,
+                },
+                content=body,
+            )
+
+        handoff = send("v4-event-1", "我要人工客服")
+        assert handoff.status_code == 200
+        assert handoff.json()["automation_state"] == "human"
+        run_count = len(client.get("/api/v1/ops/runs", headers=admin).json())
+
+        human_managed = send("v4-event-2", "补充说明：包裹已经破损")
+        assert human_managed.status_code == 200
+        assert human_managed.json()["reply"] == ""
+        assert human_managed.json()["automation_state"] == "human"
+        assert len(client.get("/api/v1/ops/runs", headers=admin).json()) == run_count
+
+        ticket_id = handoff.json()["ticket_id"]
+        reply = client.post(
+            f"/api/v1/tickets/{ticket_id}/reply",
+            headers={**admin, "Idempotency-Key": "reply-v4-1"},
+            json={"content": "已收到补充信息，正在核实。"},
+        )
+        assert reply.status_code == 200
+        repeated_reply = client.post(
+            f"/api/v1/tickets/{ticket_id}/reply",
+            headers={**admin, "Idempotency-Key": "reply-v4-1"},
+            json={"content": "已收到补充信息，正在核实。"},
+        )
+        assert repeated_reply.json() == reply.json()
+        conflicting_reply = client.post(
+            f"/api/v1/tickets/{ticket_id}/reply",
+            headers={**admin, "Idempotency-Key": "reply-v4-1"},
+            json={"content": "这是一条不同内容。"},
+        )
+        assert conflicting_reply.status_code == 409
+        conversation_id = handoff.json()["conversation_id"]
+        resumed = client.patch(
+            f"/api/v1/conversations/{conversation_id}/automation",
+            headers=admin,
+            json={"state": "auto"},
+        )
+        assert resumed.status_code == 200
+        assert resumed.json()["automation_state"] == "auto"
+
+
+def test_connector_activation_rejects_declared_unsupported_capability() -> None:
+    with build_v3_client() as client:
+        admin = bearer(token(role="admin"))
+        connector = client.post(
+            "/api/v1/admin/connectors",
+            headers=admin,
+            json={
+                "name": "bad-capabilities",
+                "provider": "mock",
+                "capabilities": ["refund_payment"],
+                "config": {},
+            },
+        ).json()
+        activated = client.post(
+            f"/api/v1/admin/connectors/{connector['id']}/activate", headers=admin
+        )
+        assert activated.status_code == 409
+        assert "refund_payment" in activated.json()["detail"]
+
+
+def test_ungrounded_knowledge_creates_real_handoff(tmp_path: Path) -> None:
+    empty_knowledge = tmp_path / "empty-knowledge.json"
+    empty_catalog = tmp_path / "empty-catalog.json"
+    empty_knowledge.write_text("[]", encoding="utf-8")
+    empty_catalog.write_text("[]", encoding="utf-8")
+    settings = Settings(
+        app_env="test",
+        auth_mode="jwt",
+        jwt_secret=JWT_SECRET,
+        jwt_issuer="supportpilot-test",
+        jwt_audience="supportpilot-api",
+        database_url="sqlite+aiosqlite:///:memory:",
+        llm_enabled=False,
+        knowledge_base_path=empty_knowledge,
+        catalog_path=empty_catalog,
+        rate_limit_per_minute=10_000,
+    )
+    with TestClient(
+        create_app(settings=settings, database=Database(settings.database_url))
+    ) as client:
+        customer = bearer(token(role="customer", customer_id="demo-001"))
+        response = client.post(
+            "/api/v1/chat", headers=customer, json={"message": "查询火星商品参数"}
+        )
+        assert response.status_code == 200
+        assert response.json()["ticket_id"]
+        conversation = client.get(
+            f"/api/v1/conversations/{response.json()['conversation_id']}", headers=customer
+        )
+        assert conversation.json()["automation_state"] == "human"
+
+
+@pytest.mark.asyncio
+async def test_worker_delivers_durable_outbound_message(tmp_path: Path) -> None:
+    database_path = tmp_path / "worker.db"
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+aiosqlite:///{database_path.as_posix()}",
+        llm_enabled=False,
+    )
+    database = Database(settings.database_url)
+    await database.create_schema()
+    await seed_demo_data(database, settings)
+    async with database.sessions() as session:
+        support_repo = SupportRepository(session)
+        platform_repo = PlatformRepository(session)
+        conversation = await support_repo.get_or_create_conversation("demo-001", None)
+        await platform_repo.bind_conversation(settings.default_tenant_id, conversation.id)
+        connector = await platform_repo.find_live_connector(
+            settings.default_tenant_id, "outbound_chat"
+        )
+        await platform_repo.bind_channel_conversation(
+            settings.default_tenant_id,
+            connector.id,
+            "worker-channel-1",
+            conversation.id,
+        )
+        message = await platform_repo.enqueue_outbound_message(
+            tenant_id=settings.default_tenant_id,
+            connector_id=connector.id,
+            conversation_id=conversation.id,
+            external_conversation_id="worker-channel-1",
+            content="执行结果已更新。",
+            idempotency_key="worker-delivery-test",
+        )
+        message_id = message.id
+        await session.commit()
+
+    providers = ProviderRegistry(EnvironmentCredentialResolver())
+    processed = await process_once(database, ActionService(settings, providers))
+    assert processed == 1
+    async with database.sessions() as session:
+        delivered = await session.get(OutboundMessage, message_id)
+        assert delivered is not None
+        assert delivered.status == "delivered"
+        assert delivered.external_id
+    await database.dispose()
